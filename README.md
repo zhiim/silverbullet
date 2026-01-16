@@ -1,7 +1,12 @@
+![GitHub Repo stars](https://img.shields.io/github/stars/silverbulletmd/silverbullet)
+![Docker Pulls](https://img.shields.io/docker/pulls/zefhemel/silverbullet)
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/silverbulletmd/silverbullet/total)
+![GitHub contributors](https://img.shields.io/github/contributors/silverbulletmd/silverbullet)
+
 # SilverBullet
 SilverBullet is a Programmable, Private, Browser-based, Open Source, Self Hosted, Personal Knowledge Management Platform.
 
-_Yowza!_ That surely is a lot of adjectives to describe a Markdown editor programmable with Lua.
+_Yowza!_ That surely is a lot of adjectives to describe a browser-based Markdown editor programmable with Lua.
 
 Let’s get more specific.
 
@@ -17,10 +22,11 @@ And if you are comfortable **programming** a little bit — now we’re really t
 Check out the [instructions](https://silverbullet.md/Install).
 
 ## Developing SilverBullet
-
-SilverBullet's frontend is written in [TypeScript](https://www.typescriptlang.org/) and built on top of the excellent [CodeMirror 6](https://codemirror.net/) editor component. Additional UI is built using [Preact](https://preactjs.com). [ESBuild](https://esbuild.github.io)) is used to build both the front-end.
+SilverBullet's frontend is written in [TypeScript](https://www.typescriptlang.org/) and built on top of the excellent [CodeMirror 6](https://codemirror.net/) editor component. Additional UI is built using [Preact](https://preactjs.com). [ESBuild](https://esbuild.github.io)) running through Deno is used to build both the front-end.
 
 The server backend is written in Go.
+
+If you're considering contributing changes, be aware of the [LLM use policy](https://silverbullet.md/LLM%20Use).
 
 ## Code structure
 * `client/`: The SilverBullet client, implemented with TypeScript

@@ -16,12 +16,14 @@ import { luaDirectivePlugin } from "./lua_directive.ts";
 import { mathPlugin } from "./math.ts";
 import { hashtagPlugin } from "./hashtag.ts";
 import type { ClickEvent } from "@silverbulletmd/silverbullet/type/client";
+import { attributePlugin } from "./attribute.ts";
 
 export function cleanModePlugins(client: Client) {
   const pluginsNeededEvenWhenRenderingSyntax = [
     luaDirectivePlugin(client),
     cleanWikiLinkPlugin(client),
     hashtagPlugin(),
+    attributePlugin(),
     frontmatterPlugin(client),
   ];
 

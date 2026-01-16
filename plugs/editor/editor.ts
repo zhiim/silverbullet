@@ -2,12 +2,29 @@ import {
   clientStore,
   codeWidget,
   editor,
+  index,
+  system,
 } from "@silverbulletmd/silverbullet/syscalls";
-import { queryLuaObjects } from "../index/api.ts";
 import type { FilterOption } from "@silverbulletmd/silverbullet/type/client";
 
 // Run on "editor:init"
 export async function setEditorMode() {
+  // TODO: Remove at some point: temporary upgrade code
+  const allSyscalls = await system.listSyscalls();
+  // console.log("All syscalls", allSyscalls);
+  const readPageWithMetaCall = allSyscalls.find((sc) =>
+    sc.name === "space.readPageWithMeta"
+  );
+
+  // console.log(readPageWithMetaCall);
+
+  if (!readPageWithMetaCall) {
+    await editor.alert(
+      "Client needs reloading to update the cache, required syscalls are not available in this version. This message may appear a few times. Reloading now.",
+    );
+    editor.reloadUI();
+  }
+
   if (await clientStore.get("vimMode")) {
     await editor.setUiOption("vimMode", true);
   }
@@ -44,7 +61,7 @@ export async function openMetaNavigator() {
 
 export async function openTagNavigator() {
   // Query all tags with a matching parent
-  const allTags: FilterOption[] = (await queryLuaObjects<string>("tag", {
+  const allTags: FilterOption[] = (await index.queryLuaObjects<string>("tag", {
     select: { type: "Variable", name: "name", ctx: {} as any },
     distinct: true,
   })).map((name) => ({ name }));
@@ -98,6 +115,20 @@ export async function moveToPosCommand() {
   }
   const pos = +posString;
   await editor.moveCursor(pos, true); // showing the movement for better UX
+}
+
+export async function copyRefCommand() {
+  const page = await editor.getCurrentPage();
+  const pos = await editor.getCursor();
+  await editor.copyToClipboard(`[[${page}@${pos}]]`);
+  await editor.flashNotification("Ref copied to clipboard");
+}
+
+export async function copyLinkCommand() {
+  const page = await editor.getCurrentPage();
+  const pos = await editor.getCursor();
+  await editor.copyToClipboard(`${await system.getBaseURI()}${page}@${pos}`);
+  await editor.flashNotification("Link copied to clipboard");
 }
 
 export async function moveToLineCommand() {

@@ -4,7 +4,7 @@ import {
   markdown,
   space,
 } from "@silverbulletmd/silverbullet/syscalls";
-import { getBackLinks, type LinkObject } from "./page_links.ts";
+import { getBackLinks, type LinkObject } from "./link.ts";
 import {
   absoluteToRelativePath,
   folderName,
@@ -49,7 +49,6 @@ export async function renamePageLinkCommand() {
     console.error("No link found at cursor position...");
     return;
   }
-  console.log("Link node", mdTree);
   addParentPointers(mdTree);
   let node: ParseTree | null = link;
   if (node.type !== "WikiLink") {

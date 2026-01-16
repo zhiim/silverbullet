@@ -35,7 +35,7 @@ import type {
   PageCreatingContent,
   PageCreatingEvent,
 } from "@silverbulletmd/silverbullet/type/event";
-import type { StyleObject } from "../plugs/index/style.ts";
+import type { StyleObject } from "../plugs/index/space_style.ts";
 import { jitter, throttle } from "@silverbulletmd/silverbullet/lib/async";
 import { EventedSpacePrimitives } from "./spaces/evented_space_primitives.ts";
 import { HttpSpacePrimitives } from "./spaces/http_space_primitives.ts";
@@ -332,13 +332,7 @@ export class Client {
       ) => {
         console.log("Queueing index for", name);
         await this.eventHook.dispatchEvent("file:clearindex", name);
-        await this.mq.send("preIndexQueue", name);
-        if (await this.clientSystem.hasPreIndexCompleted()) {
-          // When the client is clean booted (no index yet), we skip indexing on the first pass
-          // and then schedule it once pre-index has finished for all files
-          // However, if pre indexing has already completed, then we schedule it immediately
-          await this.mq.send("indexQueue", name);
-        }
+        await this.mq.send("indexQueue", name);
       },
     );
 
@@ -350,35 +344,33 @@ export class Client {
     this.space = space;
 
     let startTime = -1;
-    this.eventHook.addLocalListener("file:initial", () => {
+    this.eventHook.addLocalListener("file:initial", async () => {
       startTime = Date.now();
+      await this.clientSystem.setIndexOngoing(true);
     });
 
     const emptyQueueHandler = async () => {
-      if (!await this.clientSystem.hasPreIndexCompleted()) {
-        // Pre indexing has just finished for the first time
+      await this.clientSystem.setIndexOngoing(false);
+      if (
+        startTime !== -1 && !await this.clientSystem.hasInitialIndexCompleted()
+      ) {
+        // Indexing has just finished for the first time
         console.info(
-          "Pre-indexing complete after",
+          "Initial index complete after",
           (Date.now() - startTime) / 1000,
           "s",
         );
         // Unsubscribe myself
         this.eventHook.removeLocalListener(
-          "mq:emptyQueue:preIndexQueue",
+          "mq:emptyQueue:indexQueue",
           emptyQueueHandler,
         );
-        await this.clientSystem.markPreIndexComplete();
+        await this.clientSystem.markInitialIndexComplete();
         await this.clientSystem.reloadState();
-        // Queue all pages for full indexing
-        await this.mq.batchSend(
-          "indexQueue",
-          (await space.fetchPageList()).map((pm) => pm.name + ".md"),
-        );
-        await this.mq.awaitEmptyQueue("indexQueue");
       }
     };
     this.eventHook.addLocalListener(
-      "mq:emptyQueue:preIndexQueue",
+      "mq:emptyQueue:indexQueue",
       emptyQueueHandler,
     );
 
@@ -543,6 +535,9 @@ export class Client {
                     type: "update-current-page-meta",
                     meta: enrichedMeta,
                   });
+
+                  // Trigger editor re-render to update Lua widgets with the new metadata
+                  this.editorView.dispatch({});
                 }
               })
               .catch((e) => {
@@ -608,7 +603,7 @@ export class Client {
     console.log("Updating page list cache");
     // Check if the initial sync has been completed
     const initialIndexCompleted = await this.clientSystem
-      .hasPreIndexCompleted();
+      .hasInitialIndexCompleted();
 
     let allPages: PageMeta[] = [];
 
@@ -897,14 +892,6 @@ export class Client {
     >;
   }
 
-  miniEditorComplete(
-    context: CompletionContext,
-  ): Promise<CompletionResult | null> {
-    return this.completeWithEvent(context, "minieditor:complete") as Promise<
-      CompletionResult | null
-    >;
-  }
-
   async reloadEditor() {
     if (!this.systemReady) return;
 
@@ -1059,6 +1046,7 @@ export class Client {
 
     // Fetch next page to open
     let doc;
+    let markerIndex = -1;
     try {
       doc = await this.space.readPage(pageName);
     } catch (e: any) {
@@ -1107,6 +1095,14 @@ export class Client {
       if (results.length === 1) {
         doc.text = results[0].text;
         doc.meta.perm = results[0].perm;
+        // check for |^| and remove it; record position to place cursor later
+        const cursorMarker = "|^|";
+        const idx = doc.text.indexOf(cursorMarker);
+        if (idx !== -1) {
+          markerIndex = idx;
+          doc.text = doc.text.slice(0, idx) +
+            doc.text.slice(idx + cursorMarker.length);
+        }
       } else if (results.length > 1) {
         console.error(
           "Multiple responses for editor:pageCreating event, this is not supported",
@@ -1129,7 +1125,7 @@ export class Client {
 
     // Fetch the meta which includes the possibly indexed stuff, like page
     // decorations
-    if (await this.clientSystem.hasPreIndexCompleted()) {
+    if (await this.clientSystem.hasInitialIndexCompleted()) {
       try {
         const enrichedMeta = await this.clientSystem.getObjectByRef<PageMeta>(
           pageName,
@@ -1150,6 +1146,9 @@ export class Client {
           type: "update-current-page-meta",
           meta: enrichedMeta,
         });
+
+        // Trigger editor re-render to update Lua widgets with the new metadata
+        this.editorView.dispatch({});
       } catch (e: any) {
         console.log(
           `There was an error trying to fetch enriched metadata: ${e.message}`,
@@ -1173,6 +1172,14 @@ export class Client {
 
     this.space.watchFile(path);
 
+    if (navigateWithinPage) {
+      // Setup scroll position, cursor position, etc
+      try {
+        this.navigateWithinPage(locationState);
+      } catch {
+        // We don't really care if this fails.
+      }
+    }
     // Note: these events are dispatched asynchronously deliberately (not waiting for results)
     this.eventHook.dispatchEvent(
       loadingDifferentPath ? "editor:pageLoaded" : "editor:pageReloaded",
@@ -1180,12 +1187,22 @@ export class Client {
       previousPath ? getNameFromPath(previousPath) : undefined,
     ).catch(console.error);
 
-    if (navigateWithinPage) {
-      // Setup scroll position, cursor position, etc
+    // If a cursor marker was found for a newly-created page, place the
+    // cursor there now (after navigateWithinPage so it doesn't get
+    // overwritten by default positioning).
+    if (markerIndex !== -1) {
       try {
-        this.navigateWithinPage(locationState);
-      } catch {
-        // We don't really care if this fails.
+        const pos = Math.max(
+          0,
+          Math.min(markerIndex, this.editorView.state.doc.length),
+        );
+        this.editorView.dispatch({
+          selection: { anchor: pos },
+          effects: [EditorView.scrollIntoView(pos, { y: "center" })],
+        });
+        this.editorView.focus();
+      } catch (e) {
+        console.error("Failed to set cursor at cursor marker:", e);
       }
     }
   }
@@ -1274,7 +1291,7 @@ export class Client {
       console.warn("Not loading custom styles, since space style is disabled");
       return;
     }
-    if (!await this.clientSystem.hasPreIndexCompleted()) {
+    if (!await this.clientSystem.hasInitialIndexCompleted()) {
       return;
     }
 

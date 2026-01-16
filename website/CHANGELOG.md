@@ -3,21 +3,48 @@ An attempt at documenting the changes/new features introduced in each release.
 ## Edge
 Whenever a commit is pushed to the `main` branch, within ~10 minutes, it will be released as a docker image with the `:v2` tag, and a binary in the [edge release](https://github.com/silverbulletmd/silverbullet/releases/tag/edge). If you want to live on the bleeding edge of SilverBullet goodness (or regression) this is where to do it.
 
-* Two-staged indexing, an attempt to speed up initial client boots:
-  * **pre-index**: only indexes page objects and space-lua and space-style blocks. After this phase the system will reload and most core functionality should become available.
-  * **index**: indexes everything else
-* **Removed** full-text search plug from the main distribution, this has now been moved to [a separate repo](https://github.com/silverbulletmd/basic-search) (installable via the library manager). This dramatically improves indexing speed. Honestly, use [Silversearch](https://github.com/MrMugame/silversearch) instead.
-* Production builds now include sourcemaps for easier debugging in browser DevTools. If you don't want to serve sourcemaps publicly, you can block `*.js.map` files at your reverse proxy level (see [[TLS#Blocking sourcemaps]]).
-* Better link support in frontmatter (by [Tomasz Gorochowik](https://github.com/silverbulletmd/silverbullet/pull/1711))
+## 2.4.0
+* Indexer rework (note: upgrading will start a full space reindex automatically):
+  * Performance: up to 2x faster
+  * Internal refactor, actually adding at least (rudimentary) unit tests now (imagine!)
+  * `item` and `task` now also index (wiki) links and inherited (wiki) links (links appearing in parent nodes), as [requested here](https://community.silverbullet.md/t/coming-from-logseq-outlines-and-linked-mentions/290) under `links` and `ilinks`. Updated the "Linked Tasks" widget now to rely on `ilinks`.
+  * Rewrote snippet text for links (used in [[Linked Mention|Linked Mentions]]) to be more contextual, now also includes child bullet items, see [community discussion](https://community.silverbullet.md/t/coming-from-logseq-outlines-and-linked-mentions/290).
+  * For consistency with items, `task` `refs` now point to the item’s position resulting in a slight positional shift, if you have code relying on this, you may have to adjust it.
+  * Disabled indexing all paragraph text by default, this caused significant indexing overhead. [See discussion](https://community.silverbullet.md/t/who-is-using-paragraph-for-queries/3686).
+    To re-enable: `config.set("index.paragraph.all", true)`
+  * Better link support in frontmatter (by [Tomasz Gorochowik](https://github.com/silverbulletmd/silverbullet/pull/1711))
+  * The `page:index` event now also receives a `text` and `meta` attributes.
+* [[Transclusions]] improvements:
+  * Now have an “eye” button to navigate to the transcluded location
+  * Transclusions now only live preview when the cursor is outside of them (as with other pieces of markup)
+  * Transclusions now properly support headers
+  * Items and tasks are now transcluded with their children (based on `@pos` notation) (this is mostly helpful when used in queries)
+* Page/document/meta picker tweaks:
+  * Upgraded the [Fuse.js](https://www.fusejs.io) library and tuned the ranking parameters, hopefully leading to better results.
+  * Meta picker now more consistent with page picker
+  * You can now use `Alt-space` to complete a folder matching the first result — try it and let me know how this works for you in practice.
+* **Built-in full-text search has been removed** from the main distribution, this has now been moved to [a separate repo](https://github.com/silverbulletmd/basic-search) (installable via the library manager). Rationale: full text indexing is expensive and the search results were quite bad. Recommendation: install [Silversearch](https://github.com/MrMugame/silversearch) as an alternative.
+* [[Task|Tasks]]:
+  * `taskstate` objects are no more. Custom task states should now be defined using the [[API/taskState]] API.
+  * **Removed:** deadline syntax (legacy syntax from v1) for tasks, please use attributes instead (e.g. `[deadline: "2026-01-01"]`).
+* New APIs:
+  * [[API/space#space.readFileWithMeta(name)]]
+  * [[API/space#space.readPageWithMeta(name)]]
+  * [[API/space#space.readRef(ref)]]
+  * [[API/taskState#taskState.define(def)]] (see “Tasks” above)
+* New commands:
+  * `Navigate: Copy Ref To Current Position`
+  * `Navigate: Copy Link To Current Position`
 * Lua:
   * [LIQ fix](https://github.com/silverbulletmd/silverbullet/issues/1705)
   * [Ctrl-click](https://github.com/silverbulletmd/silverbullet/pull/1713) navigate to definition on non-Mac operating systems
   * Support for `<const>` in Lua (by [Matouš Jan Fialka](https://github.com/silverbulletmd/silverbullet/pull/1715))
-* Fixes:
-  * Should now deal better with authentication layers (Cloudflare Zero Trust, Authelia, Pangolin)
-  * [Sync errors](https://github.com/silverbulletmd/silverbullet/issues/1720) now propagate better to the UI
-  * Document editors now fixed in Safari (by [MrMugame](https://github.com/silverbulletmd/silverbullet/pull/1710))
-  * `%` now supported in [page names](https://github.com/silverbulletmd/silverbullet/issues/1694)
+* Production builds now include sourcemaps for easier debugging in browser DevTools. If you don't want to serve sourcemaps publicly, you can block `*.js.map` files at your reverse proxy level (see [[TLS#Blocking sourcemaps]]).
+* Should now **deal better with authentication layers** (Cloudflare Zero Trust, Authelia, Pangolin)
+* [Sync errors](https://github.com/silverbulletmd/silverbullet/issues/1720) now propagate better to the UI
+* Document editors now fixed in Safari (by [MrMugame](https://github.com/silverbulletmd/silverbullet/pull/1710))
+* `%` now supported in [page names](https://github.com/silverbulletmd/silverbullet/issues/1694)
+* Lua widgets “flapping” should now be less
 
 ## 2.3.0
 This release (re)introduces [[Share]], formalizes [[Library]], and introduces in initial version of the [[Library Manager]], a type of package manager for SilverBullet. It also progresses on Lua 5.4 compatibility.
@@ -74,7 +101,6 @@ This is a dot release primarily because due to changes in how IndexedDB database
 ## 2.1.8
 * New [[^Library/Std/APIs/Virtual Page]] API, internally used by:
   * [[^Library/Std/Infrastructure/Tag Page]]
-  * [[^Library/Std/Infrastructure/Search]]
 * Some fixes in `tonumber` handling
 * Default table renderer now renders `ref` attributes as links, so they’re clickable:
   ${query[[from index.tag "page" limit 3 select {ref=ref, lastModified=lastModified}]]}

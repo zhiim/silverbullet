@@ -5,9 +5,11 @@ import {
   renderToText,
 } from "@silverbulletmd/silverbullet/lib/tree";
 import { extendedMarkdownLanguage } from "../../markdown_parser/parser.ts";
-import { expandMarkdown } from "../../markdown_renderer/inline.ts";
+import {
+  expandMarkdown,
+  type MarkdownExpandOptions,
+} from "../../markdown_renderer/inline.ts";
 import type { Client } from "../../client.ts";
-import { LuaEnv, LuaStackFrame } from "../../space_lua/runtime.ts";
 import {
   type MarkdownRenderOptions,
   renderMarkdownToHtml,
@@ -25,8 +27,25 @@ export function markdownSyscalls(client: Client): SysCallMapping {
     "markdown.renderParseTree": (_ctx, tree: ParseTree): string => {
       return renderToText(tree);
     },
-    "markdown.expandMarkdown": (_ctx, tree: ParseTree): Promise<ParseTree> => {
-      return expandMarkdownWithClient(client, tree);
+    "markdown.expandMarkdown": async (
+      _ctx,
+      treeOrText: ParseTree | string,
+      options?: MarkdownExpandOptions,
+    ): Promise<ParseTree | string> => {
+      const outputString = typeof treeOrText === "string";
+      if (typeof treeOrText === "string") {
+        treeOrText = parse(extendedMarkdownLanguage, treeOrText);
+      }
+      const result = await expandMarkdownWithClient(
+        client,
+        treeOrText,
+        options,
+      );
+      if (outputString) {
+        return renderToText(result);
+      } else {
+        return result;
+      }
     },
     "markdown.markdownToHtml": async (
       _ctx,
@@ -50,15 +69,16 @@ export function markdownSyscalls(client: Client): SysCallMapping {
   };
 }
 
-function expandMarkdownWithClient(client: Client, tree: ParseTree) {
-  const globalEnv = client.clientSystem.spaceLuaEnv.env;
-  const tl = new LuaEnv();
-  tl.setLocal("_GLOBAL", globalEnv);
-  const sf = new LuaStackFrame(tl, null);
+function expandMarkdownWithClient(
+  client: Client,
+  tree: ParseTree,
+  options?: MarkdownExpandOptions,
+) {
   return expandMarkdown(
-    client,
+    client.space,
+    client.currentName(),
     tree,
-    globalEnv,
-    sf,
+    client.clientSystem.spaceLuaEnv,
+    options,
   );
 }

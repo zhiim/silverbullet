@@ -1,54 +1,51 @@
 import {
   collectNodesOfType,
   findNodeOfType,
+  type ParseTree,
   renderToText,
   traverseTree,
 } from "@silverbulletmd/silverbullet/lib/tree";
-import type { IndexTreeEvent } from "@silverbulletmd/silverbullet/type/event";
 import {
   isLocalURL,
   resolveMarkdownLink,
 } from "@silverbulletmd/silverbullet/lib/resolve";
-import { indexObjects, queryLuaObjects } from "./api.ts";
-import { extractFrontMatter } from "@silverbulletmd/silverbullet/lib/frontmatter";
-import { updateITags } from "@silverbulletmd/silverbullet/lib/tags";
+import { queryLuaObjects } from "./api.ts";
+import type { FrontMatter } from "./frontmatter.ts";
+import { updateITags } from "./tags.ts";
 import {
   getNameFromPath,
   isMarkdownPath,
   parseToRef,
 } from "@silverbulletmd/silverbullet/lib/ref";
-import { extractSnippetAroundIndex } from "./snippet_extractor.ts";
 import {
   mdLinkRegex,
   wikiLinkRegex,
 } from "../../client/markdown_parser/constants.ts";
 import { lua, space } from "@silverbulletmd/silverbullet/syscalls";
-import type { ObjectValue } from "@silverbulletmd/silverbullet/type/index";
+import type {
+  ObjectValue,
+  PageMeta,
+} from "@silverbulletmd/silverbullet/type/index";
+import { extractSnippet } from "./snippet.ts";
 
 export type LinkObject = ObjectValue<
-  {
-    //Page Link
-    // The page the link points to
-    toPage: string;
-    // The page the link occurs in
+  & {
+    // Common to all links
     page: string;
     pos: number;
     snippet: string;
     alias?: string;
-    asTemplate: boolean;
+  }
+  & ({
+    // Page Link
+    toPage: string;
     toFile?: never;
   } | {
     // Document Link
-    // The file the link points to
     toFile: string;
     // The page the link occurs in
-    page: string;
-    pos: number;
-    snippet: string;
-    alias?: string;
-    asTemplate: boolean;
     toPage?: never;
-  }
+  })
 >;
 
 /**
@@ -64,15 +61,20 @@ export type AspiringPageObject = ObjectValue<{
   name: string;
 }>;
 
-export async function indexLinks({ name, tree }: IndexTreeEvent) {
-  const links: ObjectValue<LinkObject>[] = [];
-  const frontmatter = await extractFrontMatter(tree);
-  const pageText = renderToText(tree);
+export async function indexLinks(
+  pageMeta: PageMeta,
+  frontmatter: FrontMatter,
+  tree: ParseTree,
+  pageText: string,
+) {
+  const objects: ObjectValue<any>[] = [];
 
   // If this is a meta template page, we don't want to index links
   if (frontmatter.tags?.find((t) => t.startsWith("meta/template"))) {
-    return;
+    return [];
   }
+
+  const name = pageMeta.name;
 
   traverseTree(tree, (n): boolean => {
     // Index [[WikiLinks]]
@@ -85,10 +87,9 @@ export async function indexLinks({ name, tree }: IndexTreeEvent) {
       const link: any = {
         ref: `${name}@${pos}`,
         tag: "link",
-        snippet: extractSnippetAroundIndex(pageText, pos),
+        snippet: extractSnippet(name, pageText, pos),
         pos,
         page: name,
-        asTemplate: false,
       };
 
       const ref = parseToRef(url);
@@ -105,7 +106,7 @@ export async function indexLinks({ name, tree }: IndexTreeEvent) {
         link.alias = wikiLinkAlias.children![0].text!;
       }
       updateITags(link, frontmatter);
-      links.push(link);
+      objects.push(link);
       return true;
     }
 
@@ -132,10 +133,9 @@ export async function indexLinks({ name, tree }: IndexTreeEvent) {
       const link: any = {
         ref: `${name}@${pos}`,
         tag: "link",
-        snippet: extractSnippetAroundIndex(pageText, pos),
+        snippet: extractSnippet(name, pageText, pos),
         pos,
         page: name,
-        asTemplate: false,
       };
 
       const ref = parseToRef(url);
@@ -152,7 +152,7 @@ export async function indexLinks({ name, tree }: IndexTreeEvent) {
         link.alias = alias;
       }
       updateITags(link, frontmatter);
-      links.push(link);
+      objects.push(link);
       return true;
     }
 
@@ -174,9 +174,8 @@ export async function indexLinks({ name, tree }: IndexTreeEvent) {
             ref: `${name}@${pos}`,
             tag: "link",
             page: name,
-            snippet: extractSnippetAroundIndex(pageText, pos),
+            snippet: extractSnippet(name, pageText, pos),
             pos: pos,
-            asTemplate: false,
           };
 
           const ref = parseToRef(stringRef);
@@ -193,24 +192,18 @@ export async function indexLinks({ name, tree }: IndexTreeEvent) {
             link.alias = alias;
           }
           updateITags(link, frontmatter);
-          links.push(link);
+          objects.push(link);
         }
       }
     }
     return false;
   });
 
-  // console.log("Found", links, "page link(s)");
-  if (links.length > 0) {
-    await indexObjects(name, links);
-  }
-
   // Now let's check which are aspiring pages
-  const aspiringPages: ObjectValue<AspiringPageObject>[] = [];
-  for (const link of links) {
+  for (const link of objects.slice()) {
     if (link.toPage) {
       if (!await space.fileExists(`${link.toPage}.md`)) {
-        aspiringPages.push({
+        objects.push({
           ref: `${name}@${link.pos}`,
           tag: "aspiring-page",
           page: name,
@@ -228,9 +221,27 @@ export async function indexLinks({ name, tree }: IndexTreeEvent) {
     }
   }
 
-  if (aspiringPages.length > 0) {
-    await indexObjects(name, aspiringPages);
-  }
+  return objects;
+}
+
+/**
+ * Collects wiki links from a tree
+ * @param n
+ * @return found links
+ */
+export function collectPageLinks(n: ParseTree): string[] {
+  const links = new Set<string>();
+  traverseTree(n, (n) => {
+    if (n.type === "WikiLink") {
+      links.add(findNodeOfType(n, "WikiLinkPage")!.children![0].text!);
+      return true;
+    } else if (n.type === "OrderedList" || n.type === "BulletList") {
+      // Don't traverse into sub-lists
+      return true;
+    }
+    return false;
+  });
+  return [...links];
 }
 
 export async function getBackLinks(

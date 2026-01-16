@@ -16,8 +16,9 @@ import { Fragment, RawHTML, renderHtml, type Tag } from "./html_render.ts";
 import * as TagConstants from "../../plugs/index/constants.ts";
 import { extractHashtag } from "@silverbulletmd/silverbullet/lib/tags";
 import { justifiedTableRender } from "./justified_tables.ts";
-import type { PageMeta } from "../../plug-api/types/index.ts";
-import { inlineContentFromURL, parseTransclusion } from "./inline.ts";
+import type { PageMeta } from "@silverbulletmd/silverbullet/type/index";
+import { inlineContentFromURL } from "./inline.ts";
+import { parseTransclusion } from "@silverbulletmd/silverbullet/lib/transclusion";
 import katex from "katex";
 
 export type MarkdownRenderOptions = {
@@ -43,10 +44,14 @@ function cleanTags(values: (Tag | null)[], cleanWhitespace = false): Tag[] {
   return result;
 }
 
+/**
+ * Cleans up a markdown tree. Side effect: adds parent pointers
+ */
 function preprocess(t: ParseTree) {
   addParentPointers(t);
   traverseTree(t, (node) => {
     if (!node.type) {
+      // Remove redundant newlines in table
       if (node.text?.startsWith("\n")) {
         const prevNodeIdx = node.parent!.children!.indexOf(node) - 1;
         const prevNodeType = node.parent!.children![prevNodeIdx]?.type;
@@ -258,28 +263,35 @@ function render(
         return text;
       }
 
-      const result = inlineContentFromURL(
-        globalThis.client,
-        transclusion.url,
-        transclusion.alias,
-        transclusion.dimension,
-        transclusion.linktype !== "wikilink",
-      );
-      if (!globalThis.HTMLElement || !(result instanceof HTMLElement)) {
-        return text;
-      }
+      try {
+        const result = inlineContentFromURL(client.space, transclusion);
+        if (result instanceof Promise) {
+          // Can't support promises in this content
+          throw new Error("Unsupported inline");
+        }
+        // Running in non-browser context
+        if (!globalThis.HTMLElement || !(result instanceof HTMLElement)) {
+          return text;
+        }
 
-      return {
-        name: result.tagName,
-        attrs: Array.from(result.attributes).reduce(
-          (obj, attr) => {
-            obj[attr.name] = attr.value;
-            return obj;
-          },
-          {} as Record<string, string>,
-        ),
-        body: "",
-      };
+        return {
+          name: result.tagName,
+          attrs: Array.from(result.attributes).reduce(
+            (obj, attr) => {
+              obj[attr.name] = attr.value;
+              return obj;
+            },
+            {} as Record<string, string>,
+          ),
+          body: "",
+        };
+      } catch (e: any) {
+        console.error("Error handling image or transclusion", e.message);
+        return {
+          name: "span",
+          body: "Error loading image",
+        };
+      }
     }
 
     // Custom stuff
@@ -381,15 +393,6 @@ function render(
         };
       }
     }
-
-    case "DeadlineDate":
-      return {
-        name: "span",
-        attrs: {
-          class: "task-deadline",
-        },
-        body: renderToText(t),
-      };
 
     // Tables
     case "Table":

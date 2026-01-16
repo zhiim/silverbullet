@@ -1,3 +1,5 @@
+import { deepClone } from "@silverbulletmd/silverbullet/lib/json";
+
 export type ParseTree = {
   type?: string; // undefined === text node
   from?: number;
@@ -13,10 +15,6 @@ export function addParentPointers(tree: ParseTree) {
     return;
   }
   for (const child of tree.children) {
-    if (child.parent) {
-      // Already added parent pointers before
-      return;
-    }
     child.parent = tree;
     addParentPointers(child);
   }
@@ -93,7 +91,7 @@ export function replaceNodesMatching(
   tree: ParseTree,
   substituteFn: (tree: ParseTree) => ParseTree | null | undefined,
 ) {
-  if (tree.children) {
+  if (tree && tree.children) {
     const children = tree.children.slice();
     for (const child of children) {
       const subst = substituteFn(child);
@@ -165,6 +163,10 @@ export async function traverseTreeAsync(
 ): Promise<void> {
   // Do a collect, but ignore the result
   await collectNodesMatchingAsync(tree, matchFn);
+}
+
+export function cloneTree(tree: ParseTree): ParseTree {
+  return deepClone(tree, ["parent"]);
 }
 
 // Finds non-text node at position

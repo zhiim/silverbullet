@@ -69,6 +69,14 @@ function widgets.commandButton(text, commandName, args)
     text
   })
 end
+
+function widgets.subPages(pageName)
+  local prefix = (pageName or editor.getCurrentPage()) .. "/"
+  return widget.markdown(template.each(query[[
+    from index.tag "page"
+    where string.startsWith(_.name, prefix)
+  ]], templates.pageItem))
+end
 ```
 
 ## Table of contents
@@ -170,8 +178,8 @@ end
 widgets = widgets or {}
 
 local mentionTemplate = template.new [==[
-**[[${_.ref}]]**
-> ${_.snippet}
+**[[${_.ref}]]**:
+${_.snippet}
 
 ]==]
 
@@ -193,7 +201,7 @@ function widgets.linkedMentions(pageName)
   local linkedMentions = query[[
     from index.tag "link"
     where _.page != pageName and _.toPage == pageName
-    order by page
+    order by _.page desc, _.pos
   ]]
   if #linkedMentions > 0 then
     return widget.new {
@@ -238,9 +246,8 @@ function widgets.linkedTasks(pageName)
   pageName = pageName or editor.getCurrentPage()
   local tasks = query[[
     from index.tag "task"
-    where not _.done
-      and string.find(_.name, "[[" .. pageName .. "]]", 1, true)
-    order by page
+    where not _.done and table.includes(_.ilinks, pageName)
+    order by _.page
   ]]
   local md = ""
   if #tasks > 0 then

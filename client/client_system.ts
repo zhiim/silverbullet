@@ -21,7 +21,6 @@ import {
 } from "./plugos/syscalls/space.ts";
 import { syncSyscalls } from "./plugos/syscalls/sync.ts";
 import { systemSyscalls } from "./plugos/syscalls/system.ts";
-import { yamlSyscalls } from "./plugos/syscalls/yaml.ts";
 import type { Space } from "./space.ts";
 import { MQHook } from "./plugos/hooks/mq.ts";
 import { mqSyscalls } from "./plugos/syscalls/mq.ts";
@@ -52,7 +51,7 @@ import { serviceRegistrySyscalls } from "./plugos/syscalls/service_registry.ts";
 const indexVersionKey = ["$indexVersion"];
 const indexQueuedKey = ["$indexQueued"];
 // Bump this one every time a full reindex is needed
-const desiredIndexVersion = 8;
+const desiredIndexVersion = 9;
 const mqTimeout = 10000; // 10s
 const mqTimeoutRetry = 3;
 
@@ -160,7 +159,6 @@ export class ClientSystem {
       systemSyscalls(client, this.readOnlyMode),
       markdownSyscalls(client),
       assetSyscalls(this.system),
-      yamlSyscalls(),
       codeWidgetSyscalls(this.codeWidgetHook),
       clientCodeWidgetSyscalls(),
       languageSyscalls(),
@@ -201,7 +199,7 @@ export class ClientSystem {
       console.info("Space Lua scripts are disabled, skipping loading scripts");
       return;
     }
-    if (!await this.hasPreIndexCompleted()) {
+    if (!await this.hasInitialIndexCompleted()) {
       console.info(
         "Not loading space scripts, since initial indexing has not completed yet",
       );
@@ -304,11 +302,13 @@ export class ClientSystem {
       console.info(
         "[index]",
         "Performing a full space reindex, this could take a while...",
+        currentIndexVersion,
+        desiredIndexVersion,
       );
-      await this.setIndexOngoing();
+      await this.setIndexOngoing(true);
       await this.system.invokeFunction("index.reindexSpace", []);
       console.info("[index]", "Full space index complete.");
-      await this.markPreIndexComplete();
+      await this.markInitialIndexComplete();
       await this.setIndexOngoing(false);
       // Let's load space scripts again, which probably weren't loaded before
       await this.reloadState();
@@ -324,7 +324,7 @@ export class ClientSystem {
     this.client.rebuildEditorState();
   }
 
-  public async hasPreIndexCompleted() {
+  public async hasInitialIndexCompleted() {
     return (await this.ds.get(indexVersionKey)) === desiredIndexVersion;
   }
 
@@ -332,7 +332,7 @@ export class ClientSystem {
     return this.ds.get(indexVersionKey);
   }
 
-  async markPreIndexComplete() {
+  async markInitialIndexComplete() {
     await this.ds.set(indexVersionKey, desiredIndexVersion);
   }
 }

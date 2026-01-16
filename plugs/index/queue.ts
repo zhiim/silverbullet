@@ -20,21 +20,14 @@ export async function reindexSpace() {
   console.log("Clearing page index...");
   await system.invokeFunction("index.clearIndex");
 
-  const startTime = Date.now();
-
   const files = await space.listFiles();
 
   console.log("Queing", files.length, "pages to be indexed.");
   // Queue all file names to be indexed
-  await mq.batchSend("preIndexQueue", files.map((file) => file.name));
+  const startTime = Date.now();
   await mq.batchSend("indexQueue", files.map((file) => file.name));
-  await editor.showProgress(0, "index");
-  // We'll assume this one completes last
   await mq.awaitEmptyQueue("indexQueue");
-
-  // And notify the user
-  console.log(`Indexing completed in ${(Date.now() - startTime) / 1000}s`);
-  await editor.showProgress();
+  console.log("Done with full index after", Date.now() - startTime, "ms");
 }
 
 setTimeout(updateIndexProgressInUI, uiUpdateInterval);
@@ -86,37 +79,15 @@ async function indexFile(path: string) {
     // Page
     const name = path.slice(0, -3);
     // Read and parse the file
-    const text = await space.readPage(name);
+    const { text, meta } = await space.readPageWithMeta(name);
     const tree = await markdown.parseMarkdown(text);
 
     // Emit the event which will be picked up by indexers
     await events.dispatchEvent("page:index", {
       name,
+      meta,
       tree,
-    } as IndexTreeEvent);
-  }
-}
-
-export async function processPreIndexQueue(messages: MQMessage[]) {
-  for (const message of messages) {
-    const path: string = message.body;
-    console.log("[pre-index]", `Pre-indexing file ${path}`);
-    await preIndexFile(path);
-  }
-}
-
-async function preIndexFile(path: string) {
-  if (path.endsWith(".md")) {
-    // Page
-    const name = path.slice(0, -3);
-    // Read file
-    const text = await space.readPage(name);
-    const tree = await markdown.parseMarkdown(text);
-
-    // Emit the event which will be picked up by indexers
-    await events.dispatchEvent("page:preindex", {
-      name,
-      tree,
+      text,
     } as IndexTreeEvent);
   } else {
     await events.dispatchEvent("document:index", path);

@@ -64,9 +64,11 @@ class ArrayWidget extends WidgetType {
         this.client,
         `${this.cacheKey}:${i}`,
         "",
+        "",
         () => Promise.resolve(widgetContent),
         false,
         false,
+        null,
       );
 
       // Throw away the wrapper, as it only causes trouble and we are rewrapping
@@ -90,12 +92,12 @@ class ArrayWidget extends WidgetType {
 
     div.replaceChildren(...renderedWidgets);
 
-    this.client.setWidgetCache(this.cacheKey, {
-      block: true,
-      html: div.innerHTML,
-    });
     // Wait for the clientHeight to settle
     setTimeout(() => {
+      this.client.setWidgetCache(this.cacheKey, {
+        block: true,
+        html: div.innerHTML,
+      });
       this.client.setCachedWidgetHeight(this.cacheKey, div.clientHeight);
     });
   }

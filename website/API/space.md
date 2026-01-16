@@ -24,6 +24,12 @@ local content = space.readPage("welcome")
 print(content)  -- prints the content of the "welcome" page
 ```
 
+## space.readRef(ref)
+Reads a reference and returns it as a string, works for:
+* `page`: reads the entire page
+* `page#header` reads the referenced header
+* `page@pos` where `pos` points to an item or task: reads the item/task and its children
+
 ## space.getPageMeta(name)
 Gets metadata for a specific page.
 
@@ -32,6 +38,11 @@ Example:
 local meta = space.getPageMeta("welcome")
 print(meta.name, meta.lastModified)  -- prints page name and last modified date
 ```
+
+## space.readPageWithMeta(name)
+Combines readPage and getPageMeta in a single call, returning both in a table:
+* `text`: the binary content
+* `meta`: the meta data
 
 ## space.writePage(name, text)
 Writes content to a page.
@@ -132,6 +143,11 @@ Example:
 local content = space.readFile("document.txt")
 print("File size: " .. #content .. " bytes")
 ```
+
+## space.readFileWithMeta(name)
+Combines readFile and getFileMeta in a single call, returning both in a table:
+* `data`: the binary content
+* `meta`: the meta data
 
 ## space.writeFile(name, data)
 Writes binary data to a file.

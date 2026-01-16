@@ -141,6 +141,14 @@ export function systemSyscalls(
     "system.getMode": () => {
       return readOnlyMode ? "ro" : "rw";
     },
+    "system.getURLPrefix": () => {
+      const url = new URL(document.baseURI);
+
+      return url.pathname;
+    },
+    "system.getBaseURI": () => {
+      return document.baseURI;
+    },
     "system.getVersion": () => {
       return publicVersion;
     },

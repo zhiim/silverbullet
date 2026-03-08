@@ -20,6 +20,13 @@ export function indexObjects<T>(
   return syscall("index.indexObjects", page, objects);
 }
 
+export function validateObjects<T>(
+  page: string,
+  objects: ObjectValue<T>[],
+): Promise<{ error: string; object: ObjectValue } | null> {
+  return syscall("index.validateObjects", page, objects);
+}
+
 /**
  * Queries objects using a Lua-based collection query
  * @param tag - The tag to filter objects by
@@ -31,9 +38,8 @@ export function queryLuaObjects<T>(
   tag: string,
   query: LuaCollectionQuery,
   scopedVariables?: Record<string, any>,
-  ttlSecs?: number,
 ): Promise<ObjectValue<T>[]> {
-  return syscall("index.queryLuaObjects", tag, query, scopedVariables, ttlSecs);
+  return syscall("index.queryLuaObjects", tag, query, scopedVariables);
 }
 
 /**
@@ -56,4 +62,16 @@ export function getObjectByRef<T>(
  */
 export function ensureFullIndex(): Promise<void> {
   return syscall("index.ensureFullIndex");
+}
+
+export function reindexSpace(): Promise<void> {
+  return syscall("index.reindexSpace");
+}
+
+export function deleteObject(
+  page: string,
+  tag: string,
+  ref: string,
+): Promise<void> {
+  return syscall("index.deleteObject", page, tag, ref);
 }

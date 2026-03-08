@@ -23,7 +23,10 @@ type SyncEngineEvents = {
   syncConflict: (path: string) => void | Promise<void>;
 
   // Sync progress updated
-  syncProgress: (syncStatus: SyncStatus) => void | Promise<void>;
+  syncProgress: (
+    syncStatus: SyncStatus,
+    snapshot: SyncSnapshot,
+  ) => void | Promise<void>;
 };
 
 export type SyncConfig = {
@@ -57,13 +60,14 @@ export class SyncEngine extends EventEmitter<SyncEngineEvents> {
     this.snapshot = await this.loadSnapshot();
 
     this.spaceSync = new SpaceSync(this.local, this.remote, {
-      conflictResolver: this.plugAwareConflictResolver.bind(this),
+      conflictResolver: this.stdLibAwareConflictResolver.bind(this),
       isSyncCandidate: this.isSyncCandidate.bind(this),
     });
 
     this.spaceSync.on({
-      syncProgress: (status) => {
-        this.emit("syncProgress", status);
+      syncProgress: async (status, snapshot) => {
+        this.emit("syncProgress", status, snapshot);
+        await this.saveSnapshot(snapshot);
       },
       snapshotUpdated: this.saveSnapshot.bind(this),
     });
@@ -173,7 +177,7 @@ export class SyncEngine extends EventEmitter<SyncEngineEvents> {
   /**
    * Delegates to the standard primary conflict resolver, but in case of any conflicts in plugs, it will always take the version from the secondary.
    */
-  async plugAwareConflictResolver(
+  async stdLibAwareConflictResolver(
     name: string,
     snapshot: SyncSnapshot,
     primary: SpacePrimitives,

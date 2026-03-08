@@ -81,6 +81,11 @@ config.define("autoCloseBrackets", {
   type = "string",
 })
 
+config.define("shortWikiLinks", {
+  description = "Render wiki links to just the last segment, e.g. Person/John becomes John",
+  type = "boolean"
+})
+
 config.define("emoji", {
   description = "Additional emoji aliases",
   type = "object",
@@ -245,9 +250,21 @@ config.define("commands", {
       name = schema.string(),
       contexts = schema.nullableArray "string",
       priority = schema.nullable "number",
-      key = schema.nullable "string",
-      mac = schema.nullable "string",
-      hid = schema.nullable "boolean",
+      key = {
+        anyOf = {
+          schema.string(),
+          schema.array("string"),
+          schema.null()
+        }
+      },
+      mac = {
+        anyOf = {
+          schema.string(),
+          schema.array("string"),
+          schema.null()
+        }
+      },
+      hide = schema.nullable "boolean",
       requireMode = schema.nullable {
         type = "string", 
         enum = {"rw", "ro"},
@@ -307,13 +324,19 @@ config.define("taskStates", {
 })
 
 -- Don't use directly, WIP
-config.define("tagDefinitions", {
+config.define("tags", {
   type = "object",
   additionalProperties = {
     type = "object",
     properties = {
-      schema = { type = "object" },
-      metatable = { },
+      name = schema.string(),
+      schema = schema.schema(),
+      -- Whether or not an object HAS to validate to be indexed (defaults to false), has a performance penalty
+      mustValidate = schema.boolean(),
+      -- Additional custom validation logic
+      validate = schema.func(),
+      -- Invoked by the object indexer, takes a proposed object as input, returns an array of objects (can be empty table to skip indexing altogether)
+      transform = schema.func(),
     },
   },
 })
@@ -360,6 +383,7 @@ config.set {
     task = { all = true },
   },
   taskStates = {},
+  shortWikiLinks = true,
   actionButtons = {
     {
       icon = "home",

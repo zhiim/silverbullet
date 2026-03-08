@@ -16,9 +16,20 @@ ${#query[[from tags.page]]}
 -- priority: 50
 tag = tag or {}
 
--- For future use
 function tag.define(spec)
-  config.set("tagDefinitions", spec.name, spec)
+  local finalSpec = config.get({"tags", spec.name}, {})
+  local metatable = nil
+  for k, v in pairs(spec) do
+    if k == "metatable" then
+      metatable = v
+    else
+      finalSpec[k] = v
+    end
+  end
+  config.set({"tags", spec.name}, finalSpec)
+  if metatable then
+    config.setLuaValue({"tags", spec.name, "metatable"}, metatable)
+  end
 end
 
 -- Set up tags.* short cut via meta tables

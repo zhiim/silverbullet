@@ -45,18 +45,6 @@ Deno.test("Context error: indexing nil value includes message and ref", async ()
   assertCtxErrorContains(e, code, ref, "attempt to index a nil value");
 });
 
-Deno.test("Context error: indexing with nil key includes message and ref", async () => {
-  const { e, code, ref } = await runAndCatch(
-    `
-    local t = {}
-    local k = nil
-    local x = t[k]
-  `,
-    "nil_key.lua",
-  );
-  assertCtxErrorContains(e, code, ref, "attempt to index with a nil key");
-});
-
 Deno.test("Context error: calling nil includes message and ref", async () => {
   const { e, code, ref } = await runAndCatch(
     `
@@ -77,7 +65,7 @@ Deno.test("Context error: modulo by zero includes message and ref", async () => 
   `,
     "mod_zero.lua",
   );
-  assertCtxErrorContains(e, code, ref, "attempt to perform modulo by zero");
+  assertCtxErrorContains(e, code, ref, "attempt to perform 'n%0'");
 });
 
 Deno.test("Context error: type mismatch in comparison includes message and ref", async () => {
@@ -109,7 +97,7 @@ Deno.test("Context error: __index metamethod must be function or table", async (
     e,
     code,
     ref,
-    "Meta table __index must be a function or table",
+    "attempt to index a number value",
   );
 });
 
@@ -126,7 +114,7 @@ Deno.test("Context error: __call metamethod must be a function", async () => {
     e,
     code,
     ref,
-    "Meta table __call must be a function",
+    "attempt to call a number value",
   );
 });
 

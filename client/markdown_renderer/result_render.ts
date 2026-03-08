@@ -1,7 +1,13 @@
-import { LuaTable, luaToString } from "../space_lua/runtime.ts";
+import {
+  luaFormatNumber,
+  LuaTable,
+  luaToString,
+} from "../space_lua/runtime.ts";
+import { isTaggedFloat } from "../space_lua/numeric.ts";
+import { isSqlNull } from "../space_lua/query_collection.ts";
 
 export function defaultTransformer(v: any, _k: string): Promise<string> {
-  if (v === undefined) {
+  if (v === undefined || isSqlNull(v)) {
     return Promise.resolve("");
   }
   if (typeof v === "string") {
@@ -10,15 +16,17 @@ export function defaultTransformer(v: any, _k: string): Promise<string> {
   if (v && typeof v === "object") {
     return Promise.resolve(luaToString(v));
   }
+  if (typeof v === "number") {
+    return Promise.resolve(luaFormatNumber(v));
+  }
   return Promise.resolve("" + v);
 }
 
 export function refCellTransformer(v: any, k: string) {
   if (k === "ref") {
     return Promise.resolve(`[[${v}]]`);
-  } else {
-    return defaultTransformer(v, k);
   }
+  return defaultTransformer(v, k);
 }
 
 /**
@@ -109,10 +117,17 @@ export function renderExpressionResult(result: any): Promise<string> {
   if (result instanceof LuaTable) {
     result = result.toJS();
   }
+  // Must check before object/array checks — tagged floats are plain objects
+  if (isTaggedFloat(result)) {
+    return Promise.resolve(luaFormatNumber(result.value, "float"));
+  }
+  if (typeof result === "number") {
+    return Promise.resolve(luaFormatNumber(result));
+  }
   if (
     Array.isArray(result) && result.length > 0 && typeof result[0] === "object"
   ) {
-    // If result is an array of objects, render as a markdown table
+    // If result is an array of objects, render as a Markdown table
     try {
       return jsonToMDTable(result);
     } catch (e: any) {
@@ -124,10 +139,10 @@ export function renderExpressionResult(result: any): Promise<string> {
       return Promise.resolve(JSON.stringify(result));
     }
   } else if (typeof result === "object" && result.constructor === Object) {
-    // if result is a plain object, render as a markdown table
+    // If result is a plain object, render as a Markdown table
     return jsonToMDTable([result]);
   } else if (Array.isArray(result)) {
-    // Not-object array, let's render it as a markdown list
+    // Not-object array, let's render it as a Markdown list
     return Promise.resolve(result.map((item) => `- ${item}`).join("\n"));
   } else {
     return Promise.resolve("" + result);

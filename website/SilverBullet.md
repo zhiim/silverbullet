@@ -9,12 +9,12 @@ In SilverBullet you keep your content as a collection of [[Markdown]] [[Page|Pag
 
 If you are the **writer** type, you’ll appreciate SilverBullet as a clean [[Markdown]] editor with [[Live Preview]]. If you have more of an **outliner** personality, SilverBullet has [[Outlines|Outlining]] tools for you. Productivity freak? Have a look at [[Task|Tasks]]. More of a **database** person? You will appreciate [[Object|Objects]] and [[Space Lua/Lua Integrated Query|Queries]]. 
 
-And if you are comfortable **programming** a little bit — now we’re really talking. You will love _dynamically generating content_ with [[Space Lua]] (SilverBullet’s [[Lua]] dialect), or to use it to create custom [[Command|Commands]], [[Page Template|Page Templates]] or [[Space Lua/Widget|Widgets]].
+And if you are comfortable **programming** a little bit — now we’re really talking. You will love _dynamically generating content_ with [[Space Lua]] (SilverBullet’s [[Lua]] dialect), or to use it to create custom [[Command|Commands]], [[Page Template|Page Templates]] or [[API/widget|Widgets]].
 
 # Programmable notes
 Dynamically generating content, _programmable notes_... why would you want that, and how does it work?
 
-Let’s say you have documented a set of product features in individual pages that you’ve [[Tags|tagged]] with a #feature tag, and annotated with a few custom [[Frontmatter]] [[Attribute|Attributes]].
+Let’s say you have documented a set of product features in individual pages that you’ve [[Tag|tagged]] with a #feature tag, and annotated with a few custom [[Frontmatter]] [[Attribute|Attributes]].
 
 With a simple [[Space Lua/Lua Integrated Query|Query]] and [[Template]], you can now dynamically build a product feature list, ordered by _awesomeness_ (`Alt-click` or hover and click the edit button to see the underlying code):
 
@@ -71,6 +71,7 @@ Learn more about SilverBullet’s technical [[Architecture]].
 SilverBullet has been in development since early 2022, but is ever evolving. The current iteration is **SilverBullet v2**. We had a little bit of a reboot, rebuilding some of the foundations, and replacing some of the previous ([v1](https://v1.silverbullet.md)) features. 
 
 # What’s next?
+* [[Quick Start]]: Get up and running in five minutes.
 * [[Manual]]: SilverBullet’s official manual.
 * [[CHANGELOG]]: we’re in active development, so things change rapidly. Watch this page to keep up.
 * [Community](https://community.silverbullet.md): join our community: ask questions, share your experiences.

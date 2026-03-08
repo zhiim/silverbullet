@@ -20,6 +20,10 @@ export type LuaBlock = {
   needsEnv?: boolean;
   // true if this block itself (not nested ones) defines at least one label
   hasLabelHere?: boolean;
+  // true if this block itself (not nested ones) may create to-be-closed values
+  hasCloseHere?: boolean;
+  // true if this block's subtree contains any function definition
+  hasFunctionDef?: boolean;
 } & ASTContext;
 
 // STATEMENTS
@@ -89,6 +93,8 @@ export type LuaForStatement = {
   end: LuaExpression;
   step?: LuaExpression;
   block: LuaBlock;
+  // function definition in the block captures the loop variable
+  capturesLoopVar?: boolean;
 } & ASTContext;
 
 export type LuaForInStatement = {
@@ -96,6 +102,8 @@ export type LuaForInStatement = {
   names: string[];
   expressions: LuaExpression[];
   block: LuaBlock;
+  // function definition in the block captures any loop variable
+  capturesLoopVar?: boolean;
 } & ASTContext;
 
 export type LuaFunctionStatement = {
@@ -141,6 +149,7 @@ export type LuaLocalStatement = {
 
 export enum LuaAttribute {
   Const = "const",
+  Close = "close",
 }
 
 export type LuaAttName = {
@@ -166,7 +175,8 @@ export type LuaExpression =
   | LuaUnaryExpression
   | LuaTableConstructor
   | LuaFunctionDefinition
-  | LuaQueryExpression;
+  | LuaQueryExpression
+  | LuaFilteredCallExpression;
 
 export type LuaNilLiteral = {
   type: "Nil";
@@ -272,6 +282,13 @@ export type LuaFunctionDefinition = {
   body: LuaFunctionBody;
 } & ASTContext;
 
+// Aggregate with per-row filter
+export type LuaFilteredCallExpression = {
+  type: "FilteredCall";
+  call: LuaFunctionCallExpression;
+  filter: LuaExpression;
+} & ASTContext;
+
 // Query stuff
 export type LuaQueryExpression = {
   type: "Query";
@@ -283,7 +300,9 @@ export type LuaQueryClause =
   | LuaWhereClause
   | LuaLimitClause
   | LuaOrderByClause
-  | LuaSelectClause;
+  | LuaSelectClause
+  | LuaGroupByClause
+  | LuaHavingClause;
 
 export type LuaFromClause = {
   type: "From";
@@ -311,9 +330,21 @@ export type LuaOrderBy = {
   type: "Order";
   expression: LuaExpression;
   direction: "asc" | "desc";
+  nulls?: "first" | "last";
+  using?: string | LuaFunctionBody;
 } & ASTContext;
 
 export type LuaSelectClause = {
   type: "Select";
+  expression: LuaExpression;
+} & ASTContext;
+
+export type LuaGroupByClause = {
+  type: "GroupBy";
+  expressions: LuaExpression[];
+} & ASTContext;
+
+export type LuaHavingClause = {
+  type: "Having";
   expression: LuaExpression;
 } & ASTContext;

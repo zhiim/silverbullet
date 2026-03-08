@@ -3,60 +3,100 @@ import type {
   LuaCollectionQuery,
   LuaQueryCollection,
 } from "../../space_lua/query_collection.ts";
+
 import {
-  jsToLuaValue,
-  type LuaEnv,
-  type LuaStackFrame,
-  type LuaTable,
-} from "../../space_lua/runtime.ts";
-
+  type ObjectIndex,
+  ObjectValidationError,
+} from "../../data/object_index.ts";
+import type { ObjectValue } from "@silverbulletmd/silverbullet/type/index";
 import type { Client } from "../../client.ts";
+import type { LuaTable } from "../../space_lua/runtime.ts";
 
-export function indexSyscalls(client: Client): SysCallMapping {
+export function indexSyscalls(
+  objectIndex: ObjectIndex,
+  client: Client,
+): SysCallMapping {
   return {
     "index.tag": (_ctx, tagName: string): LuaQueryCollection => {
-      if (!tagName) {
-        throw new Error("Tag name is required");
-      }
-      return {
-        query: (
-          query: LuaCollectionQuery,
-          env: LuaEnv,
-          sf: LuaStackFrame,
-        ): Promise<any[]> => {
-          return client.ds.luaQuery(
-            ["idx", tagName],
-            query,
-            env,
-            sf,
-            (key, value: any) => {
-              const tag = key[1];
-              const tagDef = client.config.get<LuaTable | undefined>(
-                ["tagDefinitions", tag],
-                undefined,
-              );
-              if (!tagDef || !tagDef.has("metatable")) {
-                // Return as is
-                return value;
-              }
-              // Convert to LuaTable
-              value = jsToLuaValue(value);
-              value.metatable = tagDef.get("metatable");
-              return value;
-            },
-          );
-        },
-      };
+      return objectIndex.tag(tagName);
     },
     "index.ensureFullIndex": (_ctx) => {
-      return client.clientSystem.ensureFullIndex();
+      return objectIndex.ensureFullIndex(client.space);
+    },
+    "index.reindexSpace": () => {
+      return objectIndex.reindexSpace(client.space);
+    },
+    "index.indexObjects": (
+      _ctx,
+      page: string,
+      objects: ObjectValue[],
+    ): Promise<void> => {
+      return objectIndex.indexObjects(page, objects);
+    },
+    "index.validateObjects": async (
+      _ctx,
+      page: string,
+      objects: ObjectValue[],
+    ): Promise<{ error: string; object: ObjectValue } | null> => {
+      try {
+        await objectIndex.validateObjects(page, objects);
+        return null;
+      } catch (e: any) {
+        if (e instanceof ObjectValidationError) {
+          return {
+            error: e.message,
+            object: e.object,
+          };
+        } else {
+          throw e;
+        }
+      }
+    },
+    "index.getObjectByRef": (
+      _ctx,
+      page: string,
+      tag: string,
+      ref: string,
+    ): Promise<ObjectValue | undefined> => {
+      return objectIndex.getObjectByRef(ref, page, tag);
+    },
+    "index.queryLuaObjects": (
+      _ctx,
+      tag: string,
+      query: LuaCollectionQuery,
+      scopedVariables?: Record<string, any>,
+    ): Promise<ObjectValue[]> => {
+      return objectIndex.queryLuaObjects(
+        client.clientSystem.spaceLuaEnv.env,
+        tag,
+        query,
+        scopedVariables,
+      );
+    },
+
+    "index.deleteObject": (
+      _ctx,
+      page: string,
+      tag: string,
+      ref: string,
+    ): Promise<void> => {
+      return objectIndex.deleteObject(page, tag, ref);
     },
     "lua:index.defineTag": (_ctx, tagDef: LuaTable) => {
       // Using 'lua:' prefix to _not_ convert tagDef to a JS version (but keep original LuaTable)
       if (!tagDef.has("name")) {
         throw new Error("A tag name is required");
       }
-      client.config.set(["tagDefinitions", tagDef.get("name")], tagDef);
+      const currentTag = client.config.get(["tags", tagDef.get("name")], null);
+      if (!currentTag) {
+        client.config.set(["tags", tagDef.get("name")], {
+          name: tagDef.get("name"),
+        });
+      }
+      client.config.set(
+        ["tags", tagDef.get("name"), "metatable"],
+        tagDef.get("metatable"),
+      );
     },
   };
 }

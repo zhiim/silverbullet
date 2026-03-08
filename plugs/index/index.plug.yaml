@@ -1,20 +1,6 @@
 name: index
 functions:
   # Public API
-  batchSet:
-    path: api.ts:batchSet
-  indexObjects:
-    path: api.ts:indexObjects
-    syscall: index.indexObjects
-  query:
-    path: api.ts:query
-    syscall: index.query
-  queryLuaObjects:
-    path: api.ts:queryLuaObjects
-    syscall: index.queryLuaObjects
-  getObjectByRef:
-    path: api.ts:getObjectByRef
-    syscall: index.getObjectByRef
   extractFrontmatter:
     path: api.ts:extractFrontmatter
     syscall: index.extractFrontmatter
@@ -22,8 +8,14 @@ functions:
     path: api.ts:patchFrontmatter
     syscall: index.patchFrontmatter
   text:
-    path: index.ts:indexMarkdown
+    path: indexer.ts:indexMarkdown
     syscall: index.markdown
+  queryLuaObjects:
+    # DEPRECATED: use index.queryLuaObjects syscall instead
+    path: api.ts:queryLuaObjects
+  getObjectByRef:
+    # DEPRECATED: use index.getObjectByRef syscall instead
+    path: api.ts:getObjectByRef
 
   # YAML syscalls
   yamlParse:
@@ -34,21 +26,10 @@ functions:
     path: yaml.ts:stringify
     syscall: yaml.stringify
 
-  # Index management
-  clearIndex:
-    path: api.ts:clearIndex
-
-  clearDSIndex:
-    path: api.ts:clearFileIndex
-    events:
-      - file:deleted
-      - file:clearindex
-
   reindexSpaceCommand:
     path: "./command.ts:reindexCommand"
     command:
       name: "Space: Reindex"
-      requireMode: rw
 
   processIndexQueue:
     path: ./queue.ts:processIndexQueue
@@ -57,16 +38,13 @@ functions:
         batchSize: 3
         autoAck: true
 
-  reindexSpace:
-    path: "./queue.ts:reindexSpace"
-
   indexDocument:
     path: "./document.ts:indexDocument"
     events:
       - document:index
 
   indexPage:
-    path: index.ts:indexPage
+    path: indexer.ts:indexPage
     events:
       - page:index
 
@@ -82,11 +60,15 @@ functions:
     events:
       - editor:complete
 
+  frontmatterComplete:
+    path: frontmatter.ts:frontmatterComplete
+    events:
+      - editor:complete
+
   renamePageCommand:
     path: "./refactor.ts:renamePageCommand"
     command:
       name: "Page: Rename"
-      mac: Cmd-Alt-r
       page: ""
       requireMode: rw
       requireEditor: page
@@ -100,8 +82,6 @@ functions:
     path: "./refactor.ts:renamePageLinkCommand"
     command:
       name: "Page: Rename Linked Page"
-      mac: Cmd-Ctrl-Alt-r
-      key: Ctrl-Shift-Alt-r
       requireMode: rw
       requireEditor: page
 
@@ -134,6 +114,11 @@ functions:
     events:
       - editor:lint
 
+  lintObjects:
+    path: lint.ts:lintObjects
+    events:
+      - editor:lint
+
   # Tasks
   updateTaskState:
     path: task.ts:updateTaskState
@@ -146,7 +131,7 @@ functions:
     path: ./task.ts:taskCycleCommand
     command:
       name: "Task: Cycle State"
-      key: Alt-t
+      key: Mod-. t
       requireMode: rw
       requireEditor: page
 
@@ -161,390 +146,3 @@ functions:
       name: "Task: Remove Completed"
       requireMode: rw
       requireEditor: page
-
-config:
-  # Schema for the built-in tags indexed by this plug
-  schema.tag:
-    page:
-      type: object
-      additionalProperties: true
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-          readOnly: true
-        tags:
-          anyOf:
-            - type: array
-              items:
-                type: string
-            - type: string
-        itags:
-          type: array
-          readOnly: true
-          items:
-            type: string
-          nullable: true
-        name:
-          type: string
-          readOnly: true
-        pageDecoration:
-          type: object
-          properties:
-            prefix:
-              type: string
-              nullable: true
-            cssClasses:
-              type: array
-              items:
-                type: string
-              nullable: true
-            hide:
-              type: boolean
-              nullable: true
-            renderWidgets:
-              type: boolean
-              nullable: true
-          nullable: true
-        displayName:
-          type: string
-          nullable: true
-        aliases:
-          type: array
-          items:
-            type: string
-          nullable: true
-        created:
-          type: string
-          readOnly: true
-        contentType:
-          type: string
-          readOnly: true
-        size:
-          type: number
-          readOnly: true
-        lastModified:
-          type: string
-          readOnly: true
-        perm:
-          type: string
-          readOnly: true
-          enum:
-            - ro
-            - rw
-        lastOpened:
-          type: number
-          readOnly: true
-          nullable: true
-    aspiring-page:
-      type: object
-      additionalProperties: true
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-          readOnly: true
-        name:
-          type: string
-          readOnly: true
-        page:
-          type: string
-          readOnly: true
-        pos:
-          type: number
-          readOnly: true
-    document:
-      type: object
-      additionalProperties: true
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-          readOnly: true
-        tags:
-          type: array
-          readOnly: true
-          items:
-            type: string
-          nullable: true
-        itags:
-          type: array
-          readOnly: true
-          items:
-            type: string
-          nullable: true
-        name:
-          type: string
-          readOnly: true
-        created:
-          readOnly: true
-          type: string
-        contentType:
-          type: string
-          readOnly: true
-        size:
-          type: number
-          readOnly: true
-        lastModified:
-          type: string
-          readOnly: true
-        perm:
-          type: string
-          readOnly: true
-          enum:
-            - ro
-            - rw
-        extension:
-          readOnly: true
-          type: string
-    item:
-      type: object
-      additionalProperties: true
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-          readOnly: true
-        tags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        itags:
-          type: array
-          readOnly: true
-          items:
-            type: string
-          nullable: true
-        name:
-          type: string
-          readOnly: true
-        page:
-          type: string
-          readOnly: true
-        parent:
-          type: string
-          readOnly: true
-        pos:
-          type: number
-          readOnly: true
-        text:
-          type: string
-          readOnly: true
-    tag:
-      type: object
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-          readOnly: true
-        tags:
-          type: array
-          readOnly: true
-          items:
-            type: string
-          nullable: true
-        itags:
-          type: array
-          readOnly: true
-          items:
-            type: string
-          nullable: true
-        name:
-          type: string
-          readOnly: true
-        page:
-          type: string
-          readOnly: true
-        parent:
-          type: string
-          readOnly: true
-        context:
-          type: string
-          readOnly: true
-
-    link:
-      type: object
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        itags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        name:
-          type: string
-        page:
-          type: string
-        toFile:
-          type: string
-          nullable: true
-        toPage:
-          type: string
-          nullable: true
-        snippet:
-          type: string
-        pos:
-          type: number
-        alias:
-          type: string
-    header:
-      type: object
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        itags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        name:
-          type: string
-        page:
-          type: string
-        pos:
-          type: number
-        level:
-          type: string
-    paragraph:
-      type: object
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        itags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        text:
-          type: string
-        page:
-          type: string
-        pos:
-          type: number
-    template:
-      type: object
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-        tags:
-          anyOf:
-            - type: array
-              items:
-                type: string
-            - type: string
-        itags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        page:
-          type: string
-        pageName:
-          type: string
-        description:
-          type: string
-        pos:
-          type: number
-        hooks:
-          type: object
-        frontmatter:
-          anyOf:
-            - type: object
-            - type: string
-    table:
-      type: object
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        itags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        page:
-          type: string
-        pos:
-          type: number
-    task:
-      type: object
-      additionalProperties: true
-      properties:
-        ref:
-          type: string
-          readOnly: true
-        tag:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        itags:
-          type: array
-          items:
-            type: string
-          nullable: true
-        name:
-          type: string
-        page:
-          type: string
-        parent:
-          type: string
-        pos:
-          type: number
-        text:
-          type: string
-        state:
-          type: string
-        done:
-          type: boolean
-        deadline:
-          type: string
-          nullable: true

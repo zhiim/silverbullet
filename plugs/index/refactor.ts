@@ -1,7 +1,9 @@
 import {
   editor,
+  index,
   lua,
   markdown,
+  mq,
   space,
 } from "@silverbulletmd/silverbullet/syscalls";
 import { getBackLinks, type LinkObject } from "./link.ts";
@@ -16,7 +18,6 @@ import {
   findParentMatching,
   nodeAtPos,
 } from "@silverbulletmd/silverbullet/lib/tree";
-import { queryLuaObjects } from "./api.ts";
 import type { ObjectValue } from "@silverbulletmd/silverbullet/type/index";
 import { isValidPath } from "@silverbulletmd/silverbullet/lib/ref";
 import { notFoundError } from "@silverbulletmd/silverbullet/constants";
@@ -32,9 +33,14 @@ import { notFoundError } from "@silverbulletmd/silverbullet/constants";
  */
 export async function renamePageCommand(cmdDef: any) {
   const oldName: string = cmdDef.oldPage || await editor.getCurrentPage();
-  const newName: string = cmdDef.page ||
+  let newName: string = cmdDef.page ||
     await editor.prompt(`Rename ${oldName} to:`, oldName);
-  if (!newName) {
+  if (newName === undefined) {
+    return false;
+  }
+  newName = newName.trim();
+  if (newName === "") {
+    editor.flashNotification("Must provide a non-empty page title.", "error");
     return false;
   }
   const pageList: [string, string][] = [[oldName + ".md", newName + ".md"]];
@@ -65,8 +71,13 @@ export async function renamePageLinkCommand() {
   }
   const oldName = wikiLinkPage.children![0].text!;
 
-  const newName = await editor.prompt(`Rename ${oldName} to:`, oldName);
-  if (!newName) {
+  let newName = await editor.prompt(`Rename ${oldName} to:`, oldName);
+  if (newName === undefined) {
+    return false;
+  }
+  newName = newName.trim();
+  if (newName === "") {
+    editor.flashNotification("Must provide a non-empty page title.", "error");
     return false;
   }
   const pageList: [string, string][] = [[oldName + ".md", newName + ".md"]];
@@ -83,9 +94,17 @@ export async function renamePageLinkCommand() {
  */
 export async function renameDocumentCommand(cmdDef: any) {
   const oldName: string = cmdDef.oldDocument || await editor.getCurrentPath();
-  const newName: string = cmdDef.document ||
+  let newName: string = cmdDef.document ||
     await editor.prompt(`Rename ${oldName} to:`, oldName);
-  if (!newName) {
+  if (newName === undefined) {
+    return false;
+  }
+  newName = newName.trim();
+  if (newName === "") {
+    editor.flashNotification(
+      "Must provide a non-empty document name.",
+      "error",
+    );
     return false;
   }
   const pageList: [string, string][] = [[oldName, newName]];
@@ -169,7 +188,7 @@ async function renamePage(oldName: string, newName: string) {
   const documentsToMove = new Set<string>();
   // Links only need to be updated if the folder changes
   if (oldFolder !== newFolder) {
-    const linksInPage = await queryLuaObjects<LinkObject>("link", {
+    const linksInPage = await index.queryLuaObjects<LinkObject>("link", {
       objectVariable: "_",
       where: await lua.parseExpression(`_.page == oldName`),
     }, {
@@ -228,10 +247,6 @@ async function renamePage(oldName: string, newName: string) {
     await batchRenameFiles(batchRenameDocuments);
   }
 
-  // Navigate to new page if currently viewing old page
-  if (await editor.getCurrentPage() === oldName) {
-    await editor.navigate(newName, true);
-  }
   // Handling the edge case of a changing page name just in casing on a case insensitive FS
   const oldPageMeta = await space.getPageMeta(oldName);
   if (oldPageMeta.lastModified !== newPageMeta.lastModified) {
@@ -241,6 +256,13 @@ async function renamePage(oldName: string, newName: string) {
 
   // Update backlinks to this page
   const updatedRefences = await updateBacklinks(oldName, newName);
+
+  // Navigate to new page if currently viewing old page
+  if (await editor.getCurrentPage() === oldName) {
+    // Wait for index queue to be processed so that widgets are updated with up-to-date information
+    await mq.awaitEmptyQueue("indexQueue");
+    await editor.navigate(newName, true);
+  }
 
   let message = `Renamed ${oldName} to ${newName}`;
   if (updatedRefences > 0) {
@@ -296,13 +318,19 @@ async function renameDocument(
 export async function renamePrefixCommand(cmdDef: any) {
   const oldPrefix = cmdDef.oldPrefix ??
     await editor.prompt("Prefix to rename:", "");
-  if (!oldPrefix) {
+  if (oldPrefix === undefined) {
     return false;
   }
-
+  // Note, we do *not* trim the old or new prefix input as the user may
+  // actually want to add or remove white space. They can also input an empty
+  // string for the new prefix to remove the old prefix.
+  if (oldPrefix === "") {
+    editor.flashNotification("Must provide a non-empty prefix.", "error");
+    return false;
+  }
   const newPrefix = cmdDef.newPrefix ??
     await editor.prompt("New prefix:", oldPrefix);
-  if (!newPrefix) {
+  if (newPrefix === undefined) {
     return false;
   }
 
@@ -344,8 +372,12 @@ export async function extractToPageCommand() {
     newName = "new page";
   }
   newName = await editor.prompt(`New page title:`, newName);
-  if (!newName) {
-    return;
+  if (newName === undefined) {
+    return false;
+  }
+  newName = newName.trim();
+  if (newName === "") {
+    editor.flashNotification("Must provide a non-empty page title.", "error");
   }
 
   try {

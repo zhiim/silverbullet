@@ -20,7 +20,9 @@ export type ItemObject = ObjectValue<
     page: string;
     name: string;
     text: string;
+    // Deprecated, use range instead
     pos: number;
+    // Deprecated, use range instead
     toPos: number;
     parent?: string;
     links?: string[];
@@ -96,11 +98,12 @@ export function extractItemFromNode(
   const item: ItemObject | TaskObject = {
     ref: `${name}@${itemNode.from}`,
     tag: "item",
+    pos: itemNode.from!,
+    toPos: itemNode.to!,
+    range: [itemNode.from!, itemNode.to!],
     name: "", // to be replaced
     text: "", // to be replaced
     page: name,
-    pos: itemNode.from!,
-    toPos: itemNode.to!,
   };
 
   // This will only be valid for items, not task

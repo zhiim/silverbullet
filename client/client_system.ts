@@ -33,7 +33,7 @@ import { languageSyscalls } from "./plugos/syscalls/language.ts";
 import { codeWidgetSyscalls } from "./plugos/syscalls/code_widget.ts";
 import { clientCodeWidgetSyscalls } from "./plugos/syscalls/client_code_widget.ts";
 import { KVPrimitivesManifestCache } from "./plugos/manifest_cache.ts";
-import { createKeyBindings } from "./codemirror/editor_state.ts";
+import { createCommandKeyBindings } from "./codemirror/editor_state.ts";
 import type { DataStoreMQ } from "./data/mq.datastore.ts";
 import { jsonschemaSyscalls } from "./plugos/syscalls/jsonschema.ts";
 import { luaSyscalls } from "./plugos/syscalls/lua.ts";
@@ -41,17 +41,13 @@ import { indexSyscalls } from "./plugos/syscalls/index.ts";
 import { configSyscalls } from "./plugos/syscalls/config.ts";
 import { eventSyscalls } from "./plugos/syscalls/event.ts";
 import { DocumentEditorHook } from "./plugos/hooks/document_editor.ts";
-import type { LuaCollectionQuery } from "./space_lua/query_collection.ts";
 import type { Command } from "./types/command.ts";
 import { SpaceLuaEnvironment } from "./space_lua.ts";
 import { builtinPlugPaths } from "../plugs/builtin_plugs.ts";
 import { ServiceRegistry } from "./service_registry.ts";
 import { serviceRegistrySyscalls } from "./plugos/syscalls/service_registry.ts";
+import type { ObjectIndex } from "./data/object_index.ts";
 
-const indexVersionKey = ["$indexVersion"];
-const indexQueuedKey = ["$indexQueued"];
-// Bump this one every time a full reindex is needed
-const desiredIndexVersion = 9;
 const mqTimeout = 10000; // 10s
 const mqTimeoutRetry = 3;
 
@@ -85,6 +81,7 @@ export class ClientSystem {
     protected mq: DataStoreMQ,
     public ds: DataStore,
     public eventHook: EventHook,
+    private objectIndex: ObjectIndex,
     public readOnlyMode: boolean,
   ) {
     this.system = new System(undefined, {
@@ -94,7 +91,7 @@ export class ClientSystem {
       ),
     });
 
-    this.spaceLuaEnv = new SpaceLuaEnvironment(this.system);
+    this.spaceLuaEnv = new SpaceLuaEnvironment(this.system, objectIndex);
     this.serviceRegistry = new ServiceRegistry(this.eventHook, client.config);
 
     setInterval(() => {
@@ -128,8 +125,8 @@ export class ClientSystem {
         });
         // Replace the key mapping compartment (keybindings)
         this.client.editorView.dispatch({
-          effects: this.client.keyHandlerCompartment?.reconfigure(
-            createKeyBindings(this.client),
+          effects: this.client.commandKeyHandlerCompartment?.reconfigure(
+            createCommandKeyBindings(this.client),
           ),
         });
       },
@@ -143,6 +140,10 @@ export class ClientSystem {
 
     // Syscall hook
     this.system.addHook(new SyscallHook());
+
+    this.eventHook.addLocalListener("editor:reloadState", async () => {
+      await this.reloadState();
+    });
   }
 
   init() {
@@ -163,7 +164,7 @@ export class ClientSystem {
       clientCodeWidgetSyscalls(),
       languageSyscalls(),
       jsonschemaSyscalls(),
-      indexSyscalls(client),
+      indexSyscalls(this.objectIndex, this.client),
       //commandSyscalls(client),
       luaSyscalls(this),
       mqSyscalls(this.mq),
@@ -199,9 +200,9 @@ export class ClientSystem {
       console.info("Space Lua scripts are disabled, skipping loading scripts");
       return;
     }
-    if (!await this.hasInitialIndexCompleted()) {
+    if (!await this.objectIndex.hasFullIndexCompleted()) {
       console.info(
-        "Not loading space scripts, since initial indexing has not completed yet",
+        "Not loading space scripts, since full indexing has not completed yet",
       );
       return;
     }
@@ -260,61 +261,6 @@ export class ClientSystem {
     return this.system.localSyscall(name, args);
   }
 
-  queryLuaObjects<T>(tag: string, query: LuaCollectionQuery): Promise<T[]> {
-    return this.system.invokeFunction("index.queryLuaObjects", [tag, query]);
-  }
-
-  // Index handling
-
-  getObjectByRef<T>(page: string, tag: string, ref: string) {
-    return this.localSyscall(
-      "system.invokeFunction",
-      ["index.getObjectByRef", page, tag, ref],
-    );
-  }
-
-  async isIndexOngoing() {
-    return !!(await this.ds.get(indexQueuedKey));
-  }
-
-  async setIndexOngoing(val: boolean = true) {
-    await this.ds.set(indexQueuedKey, val);
-  }
-
-  async ensureFullIndex() {
-    if (!this.client.fullSyncCompleted) {
-      console.info(
-        "Initial full sync not completed, skipping index check",
-      );
-      return;
-    }
-    const currentIndexVersion = await this.getCurrentIndexVersion();
-
-    if (!currentIndexVersion) {
-      console.log("No index version found, assuming fresh install");
-      return;
-    }
-
-    if (
-      currentIndexVersion !== desiredIndexVersion &&
-      !await this.isIndexOngoing()
-    ) {
-      console.info(
-        "[index]",
-        "Performing a full space reindex, this could take a while...",
-        currentIndexVersion,
-        desiredIndexVersion,
-      );
-      await this.setIndexOngoing(true);
-      await this.system.invokeFunction("index.reindexSpace", []);
-      console.info("[index]", "Full space index complete.");
-      await this.markInitialIndexComplete();
-      await this.setIndexOngoing(false);
-      // Let's load space scripts again, which probably weren't loaded before
-      await this.reloadState();
-    }
-  }
-
   public async reloadState() {
     console.log(
       "Now loading space scripts, custom styles and rebuilding editor state",
@@ -322,17 +268,5 @@ export class ClientSystem {
     await this.loadLuaScripts();
     await this.client.loadCustomStyles();
     this.client.rebuildEditorState();
-  }
-
-  public async hasInitialIndexCompleted() {
-    return (await this.ds.get(indexVersionKey)) === desiredIndexVersion;
-  }
-
-  private getCurrentIndexVersion() {
-    return this.ds.get(indexVersionKey);
-  }
-
-  async markInitialIndexComplete() {
-    await this.ds.set(indexVersionKey, desiredIndexVersion);
   }
 }

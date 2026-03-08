@@ -6,8 +6,7 @@ import { fileURLToPath } from "node:url";
 import sass from "denosass";
 
 import { patchDenoLibJS } from "./client/plugos/plug_compile.ts";
-import { denoPlugins } from "@luca/esbuild-deno-loader";
-import * as esbuild from "esbuild";
+import { denoPlugin, esbuild } from "./build_deps.ts";
 
 // This builds the client and puts it into client_bundle/client
 
@@ -111,10 +110,9 @@ async function buildCopyBundleAssets() {
     jsx: "automatic",
     jsxFragment: "Fragment",
     jsxImportSource: "npm:preact@10.23.1",
-    plugins: denoPlugins({
+    plugins: [denoPlugin({
       configPath: fileURLToPath(new URL("./deno.json", import.meta.url)),
-      nodeModulesDir: "auto",
-    }),
+    })],
   });
 
   if (result.metafile) {

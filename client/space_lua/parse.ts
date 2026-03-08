@@ -1,4 +1,5 @@
 import { lezerToParseTree } from "../../client/markdown_parser/parse_tree.ts";
+import type { SyntaxNode } from "@lezer/common";
 import {
   cleanTree,
   type ParseTree,
@@ -24,6 +25,8 @@ import type {
   LuaTableField,
 } from "./ast.ts";
 import { LuaAttribute } from "./ast.ts";
+import { getBlockGotoMeta } from "./labels.ts";
+import { LuaRuntimeError, LuaStackFrame } from "./runtime.ts";
 
 const luaStyleTags = styleTags({
   Name: t.variableName,
@@ -32,7 +35,7 @@ const luaStyleTags = styleTags({
   CompareOp: t.operator,
   "true false": t.bool,
   Comment: t.lineComment,
-  "return break goto do end while repeat until function local if then else elseif in for nil or and not query from where limit select order by desc":
+  "return break goto do end while repeat until function local if then else elseif in for nil or and not query from where limit select order by desc asc nulls first last group having filter using":
     t.keyword,
 });
 
@@ -69,6 +72,515 @@ function parseChunk(t: ParseTree, ctx: ASTCtx): LuaBlock {
   return parseBlock(t.children![0], ctx);
 }
 
+function hasCloseLocal(names: LuaAttName[] | undefined): boolean {
+  if (!names) {
+    return false;
+  }
+  for (const n of names) {
+    if (n.attributes?.includes(LuaAttribute.Close) === true) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function expressionHasFunctionDef(e: LuaExpression): boolean {
+  if (!e) return false;
+  switch (e.type) {
+    case "FunctionDefinition":
+      return true;
+    case "FunctionCall":
+      if (expressionHasFunctionDef(e.prefix)) return true;
+      for (let i = 0; i < e.args.length; i++) {
+        if (expressionHasFunctionDef(e.args[i])) return true;
+      }
+      return false;
+    case "Binary":
+      return expressionHasFunctionDef(e.left) ||
+        expressionHasFunctionDef(e.right);
+    case "Unary":
+      return expressionHasFunctionDef(e.argument);
+    case "Parenthesized":
+      return expressionHasFunctionDef(e.expression);
+    case "TableConstructor":
+      for (let i = 0; i < e.fields.length; i++) {
+        const f = e.fields[i];
+        switch (f.type) {
+          case "DynamicField":
+            if (expressionHasFunctionDef(f.key)) return true;
+            if (expressionHasFunctionDef(f.value)) return true;
+            break;
+          case "PropField":
+          case "ExpressionField":
+            if (expressionHasFunctionDef(f.value)) return true;
+            break;
+        }
+      }
+      return false;
+    case "TableAccess":
+      return expressionHasFunctionDef(e.object) ||
+        expressionHasFunctionDef(e.key);
+    case "PropertyAccess":
+      return expressionHasFunctionDef(e.object);
+    case "Query":
+      for (let i = 0; i < e.clauses.length; i++) {
+        const c = e.clauses[i];
+        switch (c.type) {
+          case "From":
+            if (expressionHasFunctionDef(c.expression)) return true;
+            break;
+          case "Where":
+          case "Select":
+          case "Having":
+            if (expressionHasFunctionDef(c.expression)) return true;
+            break;
+          case "Limit":
+            if (expressionHasFunctionDef(c.limit)) return true;
+            if (c.offset && expressionHasFunctionDef(c.offset)) return true;
+            break;
+          case "OrderBy":
+            for (let j = 0; j < c.orderBy.length; j++) {
+              if (expressionHasFunctionDef(c.orderBy[j].expression)) {
+                return true;
+              }
+              if (
+                c.orderBy[j].using && typeof c.orderBy[j].using !== "string"
+              ) {
+                return true;
+              }
+            }
+            break;
+          case "GroupBy":
+            for (let j = 0; j < c.expressions.length; j++) {
+              if (expressionHasFunctionDef(c.expressions[j])) return true;
+            }
+            break;
+        }
+      }
+      return false;
+    case "FilteredCall":
+      return (
+        expressionHasFunctionDef(e.call) ||
+        expressionHasFunctionDef(e.filter)
+      );
+    default:
+      return false;
+  }
+}
+
+function expressionsHaveFunctionDef(
+  exprs: LuaExpression[] | undefined,
+): boolean {
+  if (!exprs) return false;
+  for (let i = 0; i < exprs.length; i++) {
+    if (expressionHasFunctionDef(exprs[i])) return true;
+  }
+  return false;
+}
+
+// Does the expression reference any of `names`?
+// Note: It DOES NOT descend into `FunctionDefinition`.
+function exprReferencesNames(e: LuaExpression, names: Set<string>): boolean {
+  if (!e) return false;
+  switch (e.type) {
+    case "Variable":
+      return names.has(e.name);
+    case "Binary":
+      return exprReferencesNames(e.left, names) ||
+        exprReferencesNames(e.right, names);
+    case "Unary":
+      return exprReferencesNames(e.argument, names);
+    case "Parenthesized":
+      return exprReferencesNames(e.expression, names);
+    case "FunctionCall":
+      if (exprReferencesNames(e.prefix, names)) return true;
+      for (let i = 0; i < e.args.length; i++) {
+        if (exprReferencesNames(e.args[i], names)) return true;
+      }
+      return false;
+    case "TableAccess":
+      return exprReferencesNames(e.object, names) ||
+        exprReferencesNames(e.key, names);
+    case "PropertyAccess":
+      return exprReferencesNames(e.object, names);
+    case "TableConstructor":
+      for (let i = 0; i < e.fields.length; i++) {
+        const f = e.fields[i];
+        switch (f.type) {
+          case "DynamicField":
+            if (exprReferencesNames(f.key, names)) return true;
+            if (exprReferencesNames(f.value, names)) return true;
+            break;
+          case "PropField":
+          case "ExpressionField":
+            if (exprReferencesNames(f.value, names)) return true;
+            break;
+        }
+      }
+      return false;
+    case "FunctionDefinition":
+      return false;
+    case "Query":
+      for (let i = 0; i < e.clauses.length; i++) {
+        const c = e.clauses[i];
+        switch (c.type) {
+          case "From":
+            if (exprReferencesNames(c.expression, names)) return true;
+            break;
+          case "Where":
+          case "Select":
+          case "Having":
+            if (exprReferencesNames(c.expression, names)) return true;
+            break;
+          case "Limit":
+            if (exprReferencesNames(c.limit, names)) return true;
+            if (c.offset && exprReferencesNames(c.offset, names)) return true;
+            break;
+          case "OrderBy":
+            for (let j = 0; j < c.orderBy.length; j++) {
+              if (exprReferencesNames(c.orderBy[j].expression, names)) {
+                return true;
+              }
+              if (
+                typeof c.orderBy[j].using === "string" &&
+                names.has(c.orderBy[j].using as string)
+              ) {
+                return true;
+              }
+            }
+            break;
+          case "GroupBy":
+            for (let j = 0; j < c.expressions.length; j++) {
+              if (exprReferencesNames(c.expressions[j], names)) return true;
+            }
+            break;
+        }
+      }
+      return false;
+    case "FilteredCall":
+      return (
+        exprReferencesNames(e.call, names) ||
+        exprReferencesNames(e.filter, names)
+      );
+    default:
+      return false;
+  }
+}
+
+function lvalueReferencesNames(lv: LuaLValue, names: Set<string>): boolean {
+  switch (lv.type) {
+    case "Variable":
+      return names.has(lv.name);
+    case "PropertyAccess":
+      return exprReferencesNames(lv.object as LuaExpression, names);
+    case "TableAccess":
+      return exprReferencesNames(lv.object as LuaExpression, names) ||
+        exprReferencesNames(lv.key, names);
+  }
+}
+
+// Does a function body reference any of `names` NOT shadowed by its
+// parameters?
+function functionBodyCapturesNames(
+  body: LuaFunctionBody,
+  names: Set<string>,
+): boolean {
+  let unshadowed: Set<string> | null = null;
+  for (let i = 0; i < body.parameters.length; i++) {
+    if (names.has(body.parameters[i])) {
+      if (!unshadowed) unshadowed = new Set(names);
+      unshadowed.delete(body.parameters[i]);
+    }
+  }
+  const check = unshadowed ?? names;
+  if (check.size === 0) return false;
+  return blockReferencesNames(body.block, check);
+}
+
+// Walk block using `exprReferencesNames` (inside a function body).
+function blockReferencesNames(block: LuaBlock, names: Set<string>): boolean {
+  for (let i = 0; i < block.statements.length; i++) {
+    if (statementReferencesNames(block.statements[i], names)) return true;
+  }
+  return false;
+}
+
+function statementReferencesNames(
+  s: LuaStatement,
+  names: Set<string>,
+): boolean {
+  switch (s.type) {
+    case "Local": {
+      const exprs = (s as any).expressions as LuaExpression[] | undefined;
+      if (exprs) {
+        for (let i = 0; i < exprs.length; i++) {
+          if (exprReferencesNames(exprs[i], names)) return true;
+        }
+      }
+      return false;
+    }
+    case "LocalFunction": {
+      const lf = s as any;
+      return functionBodyCapturesNames(lf.body as LuaFunctionBody, names);
+    }
+    case "Function": {
+      const fn = s as any;
+      return functionBodyCapturesNames(fn.body as LuaFunctionBody, names);
+    }
+    case "FunctionCallStatement": {
+      const call = (s as any).call as LuaFunctionCallExpression;
+      if (exprReferencesNames(call.prefix, names)) return true;
+      for (let i = 0; i < call.args.length; i++) {
+        if (exprReferencesNames(call.args[i], names)) return true;
+      }
+      return false;
+    }
+    case "Assignment": {
+      const a = s as any;
+      const vars = a.variables as LuaLValue[];
+      if (vars) {
+        for (let i = 0; i < vars.length; i++) {
+          if (lvalueReferencesNames(vars[i], names)) return true;
+        }
+      }
+      const exprs = a.expressions as LuaExpression[];
+      for (let i = 0; i < exprs.length; i++) {
+        if (exprReferencesNames(exprs[i], names)) return true;
+      }
+      return false;
+    }
+    case "Return": {
+      const exprs = (s as any).expressions as LuaExpression[];
+      for (let i = 0; i < exprs.length; i++) {
+        if (exprReferencesNames(exprs[i], names)) return true;
+      }
+      return false;
+    }
+    case "Block":
+      return blockReferencesNames(s as LuaBlock, names);
+    case "If": {
+      const iff = s as LuaIfStatement;
+      for (const c of iff.conditions) {
+        if (exprReferencesNames(c.condition, names)) return true;
+        if (blockReferencesNames(c.block, names)) return true;
+      }
+      if (iff.elseBlock && blockReferencesNames(iff.elseBlock, names)) {
+        return true;
+      }
+      return false;
+    }
+    case "While": {
+      const w = s as any;
+      if (exprReferencesNames(w.condition, names)) return true;
+      return blockReferencesNames(w.block as LuaBlock, names);
+    }
+    case "Repeat": {
+      const r = s as any;
+      if (blockReferencesNames(r.block as LuaBlock, names)) return true;
+      if (exprReferencesNames(r.condition, names)) return true;
+      return false;
+    }
+    case "For": {
+      const fr = s as any;
+      if (exprReferencesNames(fr.start, names)) return true;
+      if (exprReferencesNames(fr.end, names)) return true;
+      if (fr.step && exprReferencesNames(fr.step, names)) return true;
+      return blockReferencesNames(fr.block as LuaBlock, names);
+    }
+    case "ForIn": {
+      const fi = s as any;
+      const exprs = fi.expressions as LuaExpression[];
+      for (let i = 0; i < exprs.length; i++) {
+        if (exprReferencesNames(exprs[i], names)) return true;
+      }
+      return blockReferencesNames(fi.block as LuaBlock, names);
+    }
+    default:
+      return false;
+  }
+}
+
+// Walk block looking for `FunctionDefinition` nodes that capture `names`.
+function blockCapturesNames(block: LuaBlock, names: Set<string>): boolean {
+  for (let i = 0; i < block.statements.length; i++) {
+    if (statementCapturesNames(block.statements[i], names)) return true;
+  }
+  return false;
+}
+
+function statementCapturesNames(
+  s: LuaStatement,
+  names: Set<string>,
+): boolean {
+  switch (s.type) {
+    case "Local": {
+      const exprs = (s as any).expressions as LuaExpression[] | undefined;
+      if (exprs) {
+        for (let i = 0; i < exprs.length; i++) {
+          if (exprCapturesNames(exprs[i], names)) return true;
+        }
+      }
+      return false;
+    }
+    case "LocalFunction": {
+      const lf = s as any;
+      return functionBodyCapturesNames(lf.body as LuaFunctionBody, names);
+    }
+    case "Function": {
+      const fn = s as any;
+      return functionBodyCapturesNames(fn.body as LuaFunctionBody, names);
+    }
+    case "FunctionCallStatement": {
+      const call = (s as any).call as LuaFunctionCallExpression;
+      if (exprCapturesNames(call.prefix, names)) return true;
+      for (let i = 0; i < call.args.length; i++) {
+        if (exprCapturesNames(call.args[i], names)) return true;
+      }
+      return false;
+    }
+    case "Assignment": {
+      const exprs = (s as any).expressions as LuaExpression[];
+      for (let i = 0; i < exprs.length; i++) {
+        if (exprCapturesNames(exprs[i], names)) return true;
+      }
+      return false;
+    }
+    case "Return": {
+      const exprs = (s as any).expressions as LuaExpression[];
+      for (let i = 0; i < exprs.length; i++) {
+        if (exprCapturesNames(exprs[i], names)) return true;
+      }
+      return false;
+    }
+    case "Block":
+      return blockCapturesNames(s as LuaBlock, names);
+    case "If": {
+      const iff = s as LuaIfStatement;
+      for (const c of iff.conditions) {
+        if (exprCapturesNames(c.condition, names)) return true;
+        if (blockCapturesNames(c.block, names)) return true;
+      }
+      if (iff.elseBlock && blockCapturesNames(iff.elseBlock, names)) {
+        return true;
+      }
+      return false;
+    }
+    case "While": {
+      const w = s as any;
+      if (exprCapturesNames(w.condition, names)) return true;
+      return blockCapturesNames(w.block as LuaBlock, names);
+    }
+    case "Repeat": {
+      const r = s as any;
+      if (blockCapturesNames(r.block as LuaBlock, names)) return true;
+      if (exprCapturesNames(r.condition, names)) return true;
+      return false;
+    }
+    case "For": {
+      const fr = s as any;
+      if (exprCapturesNames(fr.start, names)) return true;
+      if (exprCapturesNames(fr.end, names)) return true;
+      if (fr.step && exprCapturesNames(fr.step, names)) return true;
+      return blockCapturesNames(fr.block as LuaBlock, names);
+    }
+    case "ForIn": {
+      const fi = s as any;
+      const exprs = fi.expressions as LuaExpression[];
+      for (let i = 0; i < exprs.length; i++) {
+        if (exprCapturesNames(exprs[i], names)) return true;
+      }
+      return blockCapturesNames(fi.block as LuaBlock, names);
+    }
+    default:
+      return false;
+  }
+}
+
+// At loop block level find `FunctionDefinition` and check if it
+// captures `names`.
+function exprCapturesNames(e: LuaExpression, names: Set<string>): boolean {
+  if (!e) return false;
+  switch (e.type) {
+    case "FunctionDefinition":
+      return functionBodyCapturesNames(e.body, names);
+    case "Binary":
+      return exprCapturesNames(e.left, names) ||
+        exprCapturesNames(e.right, names);
+    case "Unary":
+      return exprCapturesNames(e.argument, names);
+    case "Parenthesized":
+      return exprCapturesNames(e.expression, names);
+    case "FunctionCall":
+      if (exprCapturesNames(e.prefix, names)) return true;
+      for (let i = 0; i < e.args.length; i++) {
+        if (exprCapturesNames(e.args[i], names)) return true;
+      }
+      return false;
+    case "TableAccess":
+      return exprCapturesNames(e.object, names) ||
+        exprCapturesNames(e.key, names);
+    case "PropertyAccess":
+      return exprCapturesNames(e.object, names);
+    case "TableConstructor":
+      for (let i = 0; i < e.fields.length; i++) {
+        const f = e.fields[i];
+        switch (f.type) {
+          case "DynamicField":
+            if (exprCapturesNames(f.key, names)) return true;
+            if (exprCapturesNames(f.value, names)) return true;
+            break;
+          case "PropField":
+          case "ExpressionField":
+            if (exprCapturesNames(f.value, names)) return true;
+            break;
+        }
+      }
+      return false;
+    case "Query":
+      for (let i = 0; i < e.clauses.length; i++) {
+        const c = e.clauses[i];
+        switch (c.type) {
+          case "From":
+            if (exprCapturesNames(c.expression, names)) return true;
+            break;
+          case "Where":
+          case "Select":
+          case "Having":
+            if (exprCapturesNames(c.expression, names)) return true;
+            break;
+          case "Limit":
+            if (exprCapturesNames(c.limit, names)) return true;
+            if (c.offset && exprCapturesNames(c.offset, names)) return true;
+            break;
+          case "OrderBy":
+            for (let j = 0; j < c.orderBy.length; j++) {
+              if (exprCapturesNames(c.orderBy[j].expression, names)) {
+                return true;
+              }
+              const u = c.orderBy[j].using;
+              if (u && typeof u !== "string") {
+                if (functionBodyCapturesNames(u, names)) return true;
+              }
+            }
+            break;
+          case "GroupBy":
+            for (let j = 0; j < c.expressions.length; j++) {
+              if (exprCapturesNames(c.expressions[j], names)) return true;
+            }
+            break;
+        }
+      }
+      return false;
+    case "FilteredCall":
+      return (
+        exprCapturesNames(e.call, names) ||
+        exprCapturesNames(e.filter, names)
+      );
+    default:
+      return false;
+  }
+}
+
 function parseBlock(t: ParseTree, ctx: ASTCtx): LuaBlock {
   if (t.type !== "Block") {
     throw new Error(`Expected Block, got ${t.type}`);
@@ -82,6 +594,8 @@ function parseBlock(t: ParseTree, ctx: ASTCtx): LuaBlock {
   let hasLocalDecl = false;
   let dup: { name: string; ctx: ASTCtx } | undefined;
   let hasLabelHere = false;
+  let hasCloseHere = false;
+  let hasFunctionDef = false;
 
   const seen = new Set<string>();
 
@@ -105,15 +619,57 @@ function parseBlock(t: ParseTree, ctx: ASTCtx): LuaBlock {
         hasGoto = true;
         break;
       }
-      case "Local":
+      case "Local": {
+        hasLocalDecl = true;
+        if (!hasCloseHere) {
+          hasCloseHere = hasCloseLocal((s as any).names as LuaAttName[]);
+        }
+        if (!hasFunctionDef) {
+          hasFunctionDef = expressionsHaveFunctionDef(
+            (s as any).expressions as LuaExpression[] | undefined,
+          );
+        }
+        break;
+      }
       case "LocalFunction": {
         hasLocalDecl = true;
+        hasFunctionDef = true;
+        break;
+      }
+      case "Function": {
+        hasFunctionDef = true;
+        break;
+      }
+      case "FunctionCallStatement": {
+        if (!hasFunctionDef) {
+          const call = (s as any).call as LuaFunctionCallExpression;
+          hasFunctionDef = expressionHasFunctionDef(call.prefix) ||
+            expressionsHaveFunctionDef(call.args);
+        }
+        break;
+      }
+      case "Assignment": {
+        if (!hasFunctionDef) {
+          hasFunctionDef = expressionsHaveFunctionDef(
+            (s as any).expressions as LuaExpression[],
+          );
+        }
+        break;
+      }
+      case "Return": {
+        if (!hasFunctionDef) {
+          hasFunctionDef = expressionsHaveFunctionDef(
+            (s as any).expressions as LuaExpression[],
+          );
+        }
         break;
       }
       case "Block": {
         const child = s as LuaBlock;
         hasLabel = hasLabel || !!child.hasLabel;
         hasGoto = hasGoto || !!child.hasGoto;
+        hasCloseHere = hasCloseHere || !!child.hasCloseHere;
+        hasFunctionDef = hasFunctionDef || !!child.hasFunctionDef;
         break;
       }
       case "If": {
@@ -121,20 +677,58 @@ function parseBlock(t: ParseTree, ctx: ASTCtx): LuaBlock {
         for (const c of iff.conditions) {
           hasLabel = hasLabel || !!c.block.hasLabel;
           hasGoto = hasGoto || !!c.block.hasGoto;
+          hasCloseHere = hasCloseHere || !!c.block.hasCloseHere;
+          hasFunctionDef = hasFunctionDef || !!c.block.hasFunctionDef;
+          if (!hasFunctionDef) {
+            hasFunctionDef = expressionHasFunctionDef(c.condition);
+          }
         }
         if (iff.elseBlock) {
           hasLabel = hasLabel || !!iff.elseBlock.hasLabel;
           hasGoto = hasGoto || !!iff.elseBlock.hasGoto;
+          hasCloseHere = hasCloseHere || !!iff.elseBlock.hasCloseHere;
+          hasFunctionDef = hasFunctionDef || !!iff.elseBlock.hasFunctionDef;
         }
         break;
       }
       case "While":
-      case "Repeat":
-      case "For":
+      case "Repeat": {
+        const child = (s as any).block as LuaBlock;
+        hasLabel = hasLabel || !!child.hasLabel;
+        hasGoto = hasGoto || !!child.hasGoto;
+        hasCloseHere = hasCloseHere || !!child.hasCloseHere;
+        hasFunctionDef = hasFunctionDef || !!child.hasFunctionDef;
+        if (!hasFunctionDef) {
+          hasFunctionDef = expressionHasFunctionDef((s as any).condition);
+        }
+        break;
+      }
+      case "For": {
+        const child = (s as any).block as LuaBlock;
+        hasLabel = hasLabel || !!child.hasLabel;
+        hasGoto = hasGoto || !!child.hasGoto;
+        hasCloseHere = hasCloseHere || !!child.hasCloseHere;
+        hasFunctionDef = hasFunctionDef || !!child.hasFunctionDef;
+        if (!hasFunctionDef) {
+          hasFunctionDef = expressionHasFunctionDef((s as any).start) ||
+            expressionHasFunctionDef((s as any).end) ||
+            ((s as any).step
+              ? expressionHasFunctionDef((s as any).step)
+              : false);
+        }
+        break;
+      }
       case "ForIn": {
         const child = (s as any).block as LuaBlock;
         hasLabel = hasLabel || !!child.hasLabel;
         hasGoto = hasGoto || !!child.hasGoto;
+        hasCloseHere = true;
+        hasFunctionDef = hasFunctionDef || !!child.hasFunctionDef;
+        if (!hasFunctionDef) {
+          hasFunctionDef = expressionsHaveFunctionDef(
+            (s as any).expressions as LuaExpression[],
+          );
+        }
         break;
       }
       default: {
@@ -157,6 +751,12 @@ function parseBlock(t: ParseTree, ctx: ASTCtx): LuaBlock {
   }
   if (hasLabelHere) {
     block.hasLabelHere = true;
+  }
+  if (hasCloseHere) {
+    block.hasCloseHere = true;
+  }
+  if (hasFunctionDef) {
+    block.hasFunctionDef = true;
   }
 
   return block;
@@ -242,30 +842,44 @@ function parseStatement(t: ParseTree, ctx: ASTCtx): LuaStatement {
         ctx: context(t, ctx),
       };
     }
-    case "ForStatement":
+    case "ForStatement": {
       if (t.children![1].type === "ForNumeric") {
         const forNumeric = t.children![1];
-        return {
+        const name = forNumeric.children![0].children![0].text!;
+        const block = parseBlock(t.children![3], ctx);
+        const node: LuaStatement = {
           type: "For",
-          name: forNumeric.children![0].children![0].text!,
+          name,
           start: parseExpression(forNumeric.children![2], ctx),
           end: parseExpression(forNumeric.children![4], ctx),
           step: forNumeric.children![5]
             ? parseExpression(forNumeric.children![6], ctx)
             : undefined,
-          block: parseBlock(t.children![3], ctx),
+          block,
           ctx: context(t, ctx),
         };
-      } else {
-        const forGeneric = t.children![1];
-        return {
-          type: "ForIn",
-          names: parseNameList(forGeneric.children![0]),
-          expressions: parseExpList(forGeneric.children![2], ctx),
-          block: parseBlock(t.children![3], ctx),
-          ctx: context(t, ctx),
-        };
+        if (block.hasFunctionDef) {
+          const names = new Set([name]);
+          (node as any).capturesLoopVar = blockCapturesNames(block, names);
+        }
+        return node;
       }
+      const forGeneric = t.children![1];
+      const names = parseNameList(forGeneric.children![0]);
+      const block = parseBlock(t.children![3], ctx);
+      const node: LuaStatement = {
+        type: "ForIn",
+        names,
+        expressions: parseExpList(forGeneric.children![2], ctx),
+        block,
+        ctx: context(t, ctx),
+      };
+      if (block.hasFunctionDef) {
+        const nameSet = new Set(names);
+        (node as any).capturesLoopVar = blockCapturesNames(block, nameSet);
+      }
+      return node;
+    }
     case "Function":
       return {
         type: "Function",
@@ -295,13 +909,26 @@ function parseStatement(t: ParseTree, ctx: ASTCtx): LuaStatement {
         expressions: parseExpList(t.children![2], ctx),
         ctx: context(t, ctx),
       };
-    case "Local":
+    case "Local": {
+      const names = parseAttNames(t.children![1], ctx);
+
+      let closeCount = 0;
+      for (const n of names) {
+        if (n.attributes?.includes(LuaAttribute.Close) === true) {
+          closeCount++;
+          if (closeCount > 1) {
+            throw new Error("multiple <close> variables in local list");
+          }
+        }
+      }
+
       return {
         type: "Local",
-        names: parseAttNames(t.children![1], ctx),
+        names,
         expressions: t.children![3] ? parseExpList(t.children![3], ctx) : [],
         ctx: context(t, ctx),
       };
+    }
     case "ReturnStatement": {
       const expressions = t.children![1]
         ? parseExpList(t.children![1], ctx)
@@ -366,14 +993,19 @@ function parseAttName(t: ParseTree, ctx: ASTCtx): LuaAttName {
   const attribute = t.children![1].children![1]
     ? t.children![1].children![1].children![0].text!
     : undefined;
-  if (attribute && attribute !== LuaAttribute.Const) {
+  if (
+    attribute &&
+    attribute !== LuaAttribute.Const &&
+    attribute !== LuaAttribute.Close
+  ) {
     throw new Error(`unknown attribute '${attribute}'`);
   }
+  const attributes = attribute ? [attribute as LuaAttribute] : undefined;
   return {
     type: "AttName",
     name: t.children![0].children![0].text!,
     attribute,
-    attributes: attribute ? [LuaAttribute.Const] : undefined,
+    attributes,
     ctx: context(t, ctx),
   };
 }
@@ -532,13 +1164,20 @@ function parseExpression(t: ParseTree, ctx: ASTCtx): LuaExpression {
         right: parseExpression(t.children![2], ctx),
         ctx: context(t, ctx),
       };
-    case "UnaryExpression":
+    case "UnaryExpression": {
+      const op = t.children![0].children![0].text!;
+      if (op === "+") {
+        const err = new Error("unexpected symbol near '+'");
+        (err as any).astCtx = context(t.children![0], ctx);
+        throw err;
+      }
       return {
         type: "Unary",
-        operator: t.children![0].children![0].text!,
+        operator: op,
         argument: parseExpression(t.children![1], ctx),
         ctx: context(t, ctx),
       };
+    }
     case "Property":
       return {
         type: "PropertyAccess",
@@ -599,6 +1238,16 @@ function parseExpression(t: ParseTree, ctx: ASTCtx): LuaExpression {
         clauses: t.children!.slice(2, -1).map((c) => parseQueryClause(c, ctx)),
         ctx: context(t, ctx),
       };
+    case "FilteredCall": {
+      const call = parseFunctionCall(t.children![0], ctx);
+      const filterExpr = parseExpression(t.children![4], ctx);
+      return {
+        type: "FilteredCall",
+        call,
+        filter: filterExpr,
+        ctx: context(t, ctx),
+      };
+    }
     default:
       console.error(t);
       throw new Error(`Unknown expression type: ${t.type}`);
@@ -620,13 +1269,12 @@ function parseQueryClause(t: ParseTree, ctx: ASTCtx): LuaQueryClause {
           expression: parseExpression(t.children![3], ctx),
           ctx: context(t, ctx),
         };
-      } else {
-        return {
-          type: "From",
-          expression: parseExpression(t.children![1], ctx),
-          ctx: context(t, ctx),
-        };
       }
+      return {
+        type: "From",
+        expression: parseExpression(t.children![1], ctx),
+        ctx: context(t, ctx),
+      };
     }
     case "WhereClause":
       return {
@@ -650,12 +1298,36 @@ function parseQueryClause(t: ParseTree, ctx: ASTCtx): LuaQueryClause {
       const orderBy: LuaOrderBy[] = [];
       for (const child of t.children!) {
         if (child.type === "OrderBy") {
-          orderBy.push({
+          const kids = child.children!;
+          let direction: "asc" | "desc" = "asc";
+          let nulls: "first" | "last" | undefined;
+          let usingVal: string | LuaFunctionBody | undefined;
+          for (let i = 1; i < kids.length; i++) {
+            const typ = kids[i].type;
+            if (typ === "desc") direction = "desc";
+            else if (typ === "asc") direction = "asc";
+            else if (typ === "first") nulls = "first";
+            else if (typ === "last") nulls = "last";
+            else if (typ === "using") {
+              const next = kids[i + 1];
+              if (next.type === "function") {
+                usingVal = parseFunctionBody(kids[i + 2], ctx);
+                i += 2;
+              } else {
+                usingVal = next.children![0].text!;
+                i++;
+              }
+            }
+          }
+          const ob: LuaOrderBy = {
             type: "Order",
-            expression: parseExpression(child.children![0], ctx),
-            direction: child.children![1]?.type === "desc" ? "desc" : "asc",
+            expression: parseExpression(kids[0], ctx),
+            direction,
             ctx: context(child, ctx),
-          });
+          };
+          if (nulls) ob.nulls = nulls;
+          if (usingVal !== undefined) ob.using = usingVal;
+          orderBy.push(ob);
         }
       }
       return {
@@ -667,6 +1339,27 @@ function parseQueryClause(t: ParseTree, ctx: ASTCtx): LuaQueryClause {
     case "SelectClause": {
       return {
         type: "Select",
+        expression: parseExpression(t.children![1], ctx),
+        ctx: context(t, ctx),
+      };
+    }
+    case "GroupByClause": {
+      // children: ckw<"group">, ckw<"by">, exp, ",", exp, ...
+      const expressions: LuaExpression[] = t.children!
+        .filter((c) =>
+          c.type !== undefined && c.type !== "group" && c.type !== "by" &&
+          c.type !== ","
+        )
+        .map((c) => parseExpression(c, ctx));
+      return {
+        type: "GroupBy",
+        expressions,
+        ctx: context(t, ctx),
+      };
+    }
+    case "HavingClause": {
+      return {
+        type: "Having",
         expression: parseExpression(t.children![1], ctx),
         ctx: context(t, ctx),
       };
@@ -867,16 +1560,58 @@ export function stripLuaComments(s: string): string {
 }
 
 export function parse(s: string, ctx: ASTCtx = {}): LuaBlock {
-  const t = parseToCrudeAST(stripLuaComments(s));
-  // console.log("Clean tree", JSON.stringify(t, null, 2));
-  const result = parseChunk(t, ctx);
-  // console.log("Parsed AST", JSON.stringify(result, null, 2));
-  return result;
+  try {
+    const t = parseToAST(stripLuaComments(s));
+    // console.log("Clean tree", JSON.stringify(t, null, 2));
+    const result = parseChunk(t, ctx);
+    // console.log("Parsed AST", JSON.stringify(result, null, 2));
+    getBlockGotoMeta(result);
+    return result;
+  } catch (e: any) {
+    if (e && typeof e === "object" && "astCtx" in e) {
+      throw new LuaRuntimeError(
+        e.message,
+        LuaStackFrame.lostFrame.withCtx(
+          (e as any).astCtx as ASTCtx,
+        ),
+      );
+    }
+    throw e;
+  }
 }
 
-export function parseToCrudeAST(t: string): ParseTree {
-  const n = lezerToParseTree(t, parser.parse(t).topNode);
+export function parseToAST(t: string): ParseTree {
+  const tree = parser.parse(t);
+
+  const errNode = findFirstParseError(tree.topNode);
+  if (errNode) {
+    const err = new Error(luaUnexpectedSymbolMessage(t, errNode.from));
+    (err as any).astCtx = { from: errNode.from, to: errNode.to };
+    throw err;
+  }
+
+  const n = lezerToParseTree(t, tree.topNode);
   return cleanTree(n, true);
+}
+
+function findFirstParseError(node: SyntaxNode): SyntaxNode | null {
+  if (node.type.isError) {
+    return node;
+  }
+  for (let ch = node.firstChild; ch; ch = ch.nextSibling) {
+    const hit = findFirstParseError(ch);
+    if (hit) {
+      return hit;
+    }
+  }
+  return null;
+}
+
+function luaUnexpectedSymbolMessage(src: string, from: number): string {
+  let i = from;
+  while (i < src.length && /\s/.test(src[i])) i++;
+  const sym = i < src.length ? src[i] : "?";
+  return `unexpected symbol near '${sym}'`;
 }
 
 /**

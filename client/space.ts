@@ -79,14 +79,14 @@ export class Space {
     };
   }
 
-  async readRef(ref: Ref): Promise<string> {
+  async readRef(ref: Ref): Promise<{ offset: number; text: string }> {
     if (!ref.path.endsWith(".md")) {
       throw new Error("Not supported");
     }
     const name = ref.path.slice(0, -3);
     const pageText = (await this.readPage(name)).text;
     if (!ref.details) {
-      return pageText;
+      return { offset: 0, text: pageText };
     }
     const tree = parseMarkdown(pageText);
     addParentPointers(tree);
@@ -104,6 +104,7 @@ export class Space {
       case "header": {
         const desiredHeaderText = ref.details.header;
         let text = `**Error:** Header not found: ${desiredHeaderText}`;
+        let offset = 0;
         traverseTree(tree, (n) => {
           if (n.type && n.type.startsWith("ATXHeading")) {
             const level = +n.type!.substring("ATXHeading".length);
@@ -121,12 +122,13 @@ export class Space {
                 endPos = nextHeader.from!;
               }
               text = pageText.slice(n.from!, endPos);
+              offset = n.from!;
               return true;
             }
           }
           return false;
         });
-        return text;
+        return { offset, text };
       }
       case "position": {
         const pos = ref.details.pos;
@@ -145,10 +147,10 @@ export class Space {
         const lines = pageText.split("\n");
         const targetLine = lines[targetLineIndex];
         const indent = targetLine.match(/^\s*/)![0];
-        return sliceText.replaceAll(`\n${indent}`, "\n");
+        return { offset: pos, text: sliceText.replaceAll(`\n${indent}`, "\n") };
       }
     }
-    return "";
+    return { text: "", offset: 0 };
   }
 
   async writePage(
@@ -175,6 +177,14 @@ export class Space {
     return fileMeta.name.endsWith(".md") && !fileMeta.name.startsWith("_");
   }
 
+  // Checks if this a document to be listed meaning:
+  // - it's not a markdown file
+  // - it's not a javascript of javascript source map (.map)
+  isListedDocument(fileMeta: FileMeta): boolean {
+    return !this.isListedPage(fileMeta) && !fileMeta.name.endsWith(".js") &&
+      !fileMeta.name.endsWith(".map");
+  }
+
   async fetchPageList(): Promise<PageMeta[]> {
     return (await this.deduplicatedFileList())
       .filter(this.isListedPage)
@@ -183,10 +193,7 @@ export class Space {
 
   async fetchDocumentList(): Promise<DocumentMeta[]> {
     return (await this.deduplicatedFileList()).flatMap((fileMeta) =>
-      !this.isListedPage(fileMeta) &&
-        !fileMeta.name.endsWith(".plug.js")
-        ? [fileMetaToDocumentMeta(fileMeta)]
-        : []
+      this.isListedDocument(fileMeta) ? [fileMetaToDocumentMeta(fileMeta)] : []
     );
   }
 

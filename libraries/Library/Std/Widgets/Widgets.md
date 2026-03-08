@@ -178,7 +178,7 @@ end
 widgets = widgets or {}
 
 local mentionTemplate = template.new [==[
-**[[${_.ref}]]**:
+**[[${_.ref}|${_.ref}]]**:
 ${_.snippet}
 
 ]==]
@@ -199,9 +199,9 @@ config.set("std.widgets.linkedMentions", {
 function widgets.linkedMentions(pageName)
   pageName = pageName or editor.getCurrentPage()
   local linkedMentions = query[[
-    from index.tag "link"
-    where _.page != pageName and _.toPage == pageName
-    order by _.page desc, _.pos
+    from l = index.tag "link"
+    where l.page != pageName and l.toPage == pageName
+    order by l.pageLastModified desc, l.pos
   ]]
   if #linkedMentions > 0 then
     return widget.new {
@@ -245,9 +245,9 @@ config.set("std.widgets.linkedTasks", {
 function widgets.linkedTasks(pageName)
   pageName = pageName or editor.getCurrentPage()
   local tasks = query[[
-    from index.tag "task"
-    where not _.done and table.includes(_.ilinks, pageName)
-    order by _.page
+    from t = index.tag "task"
+    where not t.done and table.includes(t.ilinks, pageName)
+    order by t.page
   ]]
   local md = ""
   if #tasks > 0 then

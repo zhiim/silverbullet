@@ -1,18 +1,24 @@
 import {
+  getMetatable,
   type ILuaFunction,
+  isILuaFunction,
   isLuaTable,
   LuaBuiltinFunction,
   luaCall,
+  luaCloseFromMark,
+  luaEnsureCloseStack,
   LuaEnv,
   luaGet,
   luaKeys,
   luaLen,
   LuaMultiRes,
   LuaRuntimeError,
+  type LuaStackFrame,
   type LuaTable,
   luaToString,
   luaTypeOf,
   type LuaValue,
+  singleResult,
 } from "./runtime.ts";
 import { stringApi } from "./stdlib/string.ts";
 import { tableApi } from "./stdlib/table.ts";
@@ -23,10 +29,12 @@ import { mathApi } from "./stdlib/math.ts";
 import { parse } from "./parse.ts";
 import { evalStatement } from "./eval.ts";
 import { encodingApi } from "./stdlib/encoding.ts";
-import { luaToNumber } from "./tonumber.ts";
+import { luaToNumberDetailed } from "./tonumber.ts";
 import { luaLoad } from "./stdlib/load.ts";
 import { cryptoApi } from "./stdlib/crypto.ts";
 import { netApi } from "./stdlib/net.ts";
+import { isTaggedFloat, makeLuaFloat } from "./numeric.ts";
+import { isPromise } from "./rp.ts";
 
 const printFunction = new LuaBuiltinFunction(async (_sf, ...args) => {
   console.log(
@@ -43,23 +51,35 @@ const assertFunction = new LuaBuiltinFunction(
   },
 );
 
-const ipairsFunction = new LuaBuiltinFunction((sf, ar: LuaTable | any[]) => {
-  let i = 1;
+const ipairsFunction = new LuaBuiltinFunction((sf, t: LuaTable | any[]) => {
+  let i = 0;
+
   return async () => {
-    if (i > ar.length) {
+    i = i + 1;
+
+    const v = await luaGet(t, i, sf.astCtx ?? null, sf);
+    if (v === null || v === undefined) {
       return;
     }
-    const result = new LuaMultiRes([
-      i,
-      await luaGet(ar, i, sf.astCtx ?? null, sf),
-    ]);
-    i++;
-    return result;
+
+    return new LuaMultiRes([i, v]);
   };
 });
 
 const pairsFunction = new LuaBuiltinFunction(
   (sf, t: LuaTable | any[] | Record<string, any>) => {
+    // Respect `__pairs` metamethod for Lua tables
+    if (isLuaTable(t)) {
+      const mt = (t as any).metatable as LuaTable | null | undefined;
+      if (mt) {
+        const mm = mt.get("__pairs", sf);
+        if (mm && (typeof mm === "function" || isILuaFunction(mm))) {
+          // __pairs must return (iter, state, control, closing)
+          return luaCall(mm, [t], sf.astCtx ?? {}, sf);
+        }
+      }
+    }
+
     let keys: (string | number)[];
     if (Array.isArray(t)) {
       keys = Array.from({ length: t.length }, (_, i) => i + 1); // For arrays, generate 1-based indices
@@ -74,7 +94,7 @@ const pairsFunction = new LuaBuiltinFunction(
     }
 
     let i = 0;
-    return async () => {
+    const iter = async () => {
       if (i >= keys.length) {
         return;
       }
@@ -83,6 +103,9 @@ const pairsFunction = new LuaBuiltinFunction(
       const value = await luaGet(t, key, sf.astCtx ?? null, sf);
       return new LuaMultiRes([key, value]);
     };
+
+    // Must return (iter, state, control) for generic for
+    return new LuaMultiRes([iter, t, null]);
   },
 );
 
@@ -101,27 +124,74 @@ export const eachFunction = new LuaBuiltinFunction(
   },
 );
 
-const unpackFunction = new LuaBuiltinFunction(async (sf, t: LuaTable) => {
-  const values: LuaValue[] = [];
-  for (let i = 1; i <= (t as any).length; i++) {
-    values.push(await luaGet(t, i, sf.astCtx ?? null, sf));
-  }
-  return new LuaMultiRes(values);
-});
-
 const typeFunction = new LuaBuiltinFunction(
   (_sf, value: LuaValue): string | Promise<string> => {
     return luaTypeOf(value);
   },
 );
 
-const tostringFunction = new LuaBuiltinFunction((_sf, value: any) => {
-  return luaToString(value);
-});
+// tostring() checks `__tostring` metamethod first (with live SF), then
+// falls back to the default `luaToString` representation.
+const tostringFunction = new LuaBuiltinFunction(
+  (sf, value: any): string | Promise<string> => {
+    const mt = getMetatable(value, sf);
+    if (mt) {
+      const mm = mt.rawGet("__tostring");
+      if (mm !== undefined && mm !== null) {
+        const ctx = sf.astCtx ?? {};
+        const r = luaCall(mm, [value], ctx as any, sf);
+        const unwrap = (v: any): string => {
+          const s = singleResult(v);
+          if (typeof s !== "string") {
+            throw new LuaRuntimeError(
+              "'__tostring' must return a string",
+              sf,
+            );
+          }
+          return s;
+        };
+        if (isPromise(r)) {
+          return (r as Promise<any>).then(unwrap);
+        }
+        return unwrap(r);
+      }
+    }
+    return luaToString(value);
+  },
+);
 
 const tonumberFunction = new LuaBuiltinFunction(
-  (_sf, value: LuaValue, base?: number) => {
-    return luaToNumber(value, base);
+  (sf, value: LuaValue, base?: number) => {
+    if (base !== undefined) {
+      if (!(typeof base === "number" && base >= 2 && base <= 36)) {
+        throw new LuaRuntimeError(
+          "bad argument #2 to 'tonumber' (base out of range)",
+          sf,
+        );
+      }
+    }
+
+    if (typeof value === "number") {
+      return value;
+    }
+    if (isTaggedFloat(value)) {
+      return value;
+    }
+
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const result = luaToNumberDetailed(value, base);
+    if (result === null) {
+      return null;
+    }
+
+    if (result.numericType === "float") {
+      return makeLuaFloat(result.value);
+    }
+
+    return result.value;
   },
 );
 
@@ -129,30 +199,68 @@ const errorFunction = new LuaBuiltinFunction((sf, message: string) => {
   throw new LuaRuntimeError(message, sf);
 });
 
+async function pcallBoundary(
+  sf: LuaStackFrame,
+  fn: ILuaFunction,
+  args: LuaValue[],
+): Promise<
+  | { ok: true; values: LuaValue[] }
+  | { ok: false; message: string }
+> {
+  const closeStack = luaEnsureCloseStack(sf);
+  const mark = closeStack.length;
+
+  const errMsgOf = (e: any): string =>
+    e instanceof LuaRuntimeError ? e.message : (e?.message ?? String(e));
+
+  try {
+    const r = await luaCall(fn, args, sf.astCtx!, sf);
+    await luaCloseFromMark(sf, mark, null);
+    const values = r instanceof LuaMultiRes ? r.flatten().values : [r];
+    return { ok: true, values };
+  } catch (e: any) {
+    const msg = errMsgOf(e);
+    try {
+      await luaCloseFromMark(sf, mark, msg);
+      return { ok: false, message: msg };
+    } catch (closeErr: any) {
+      return { ok: false, message: errMsgOf(closeErr) };
+    }
+  }
+}
+
 const pcallFunction = new LuaBuiltinFunction(
   async (sf, fn: ILuaFunction, ...args) => {
-    try {
-      return new LuaMultiRes([true, await luaCall(fn, args, sf.astCtx!, sf)]);
-    } catch (e: any) {
-      if (e instanceof LuaRuntimeError) {
-        return new LuaMultiRes([false, e.message]);
-      }
-      return new LuaMultiRes([false, e.message]);
+    // To-be-closed variables must be closed when unwinding to the
+    // protected call boundary. Space Lua uses a per-thread close
+    // stack, so we snapshot its length and close anything pushed
+    // after that.
+    //
+    // The protected call boundary must be established *before*
+    // evaluating the function and its arguments.  Otherwise, any
+    // `<close>` locals created while evaluating `pcall`'s arguments
+    // will be wrongly treated as "inside" the protected call, and
+    // `pcall` may end up closing them (or affecting close ordering).
+    //
+    // `threadState` is read-only on the stack frame; do not reassign!
+    const res = await pcallBoundary(sf, fn, args);
+    if (res.ok) {
+      return new LuaMultiRes([true, ...res.values]);
     }
+    return new LuaMultiRes([false, res.message]);
   },
 );
 
 const xpcallFunction = new LuaBuiltinFunction(
   async (sf, fn: ILuaFunction, errorHandler: ILuaFunction, ...args) => {
-    try {
-      return new LuaMultiRes([true, await fn.call(sf, ...args)]);
-    } catch (e: any) {
-      const errorMsg = e instanceof LuaRuntimeError ? e.message : e.message;
-      return new LuaMultiRes([
-        false,
-        await luaCall(errorHandler, [errorMsg], sf.astCtx!, sf),
-      ]);
+    // Same semantic as `pcall` (see comments there)
+    const res = await pcallBoundary(sf, fn, args);
+    if (res.ok) {
+      return new LuaMultiRes([true, ...res.values]);
     }
+    const hr = await luaCall(errorHandler, [res.message], sf.astCtx!, sf);
+    const outVals = hr instanceof LuaMultiRes ? hr.flatten().values : [hr];
+    return new LuaMultiRes([false, ...outVals]);
   },
 );
 
@@ -168,7 +276,7 @@ const setmetatableFunction = new LuaBuiltinFunction(
 
 const rawlenFunction = new LuaBuiltinFunction(
   (_sf, value: LuaValue) => {
-    return luaLen(value, _sf);
+    return luaLen(value, _sf, true);
   },
 );
 
@@ -192,7 +300,7 @@ const rawgetFunction = new LuaBuiltinFunction(
         typeName = "nil";
       } else if (typeof table === "boolean") {
         typeName = "boolean";
-      } else if (typeof table === "number" || table instanceof Number) {
+      } else if (typeof table === "number" || isTaggedFloat(table)) {
         typeName = "number";
       } else if (typeof table === "string") {
         typeName = "string";
@@ -215,16 +323,15 @@ const rawgetFunction = new LuaBuiltinFunction(
       return v === undefined ? null : v;
     }
 
-    const k = key instanceof Number ? Number(key) : key;
+    const k = isTaggedFloat(key) ? key.value : key;
 
     if (isArray) {
       if (typeof k === "number") {
         const v = (table as any[])[k - 1];
         return v === undefined ? null : v;
-      } else {
-        const v = (table as Record<string, any>)[k];
-        return v === undefined ? null : v;
       }
+      const v = (table as Record<string, any>)[k];
+      return v === undefined ? null : v;
     }
 
     const v = (table as Record<string | number, any>)[k as any];
@@ -234,8 +341,8 @@ const rawgetFunction = new LuaBuiltinFunction(
 
 const rawequalFunction = new LuaBuiltinFunction(
   (_sf, a: any, b: any) => {
-    const av = a instanceof Number ? Number(a) : a;
-    const bv = b instanceof Number ? Number(b) : b;
+    const av = isTaggedFloat(a) ? a.value : a;
+    const bv = isTaggedFloat(b) ? b.value : b;
     return av === bv;
   },
 );
@@ -277,12 +384,12 @@ const selectFunction = new LuaBuiltinFunction(
   (_sf, index: number | "#", ...args: LuaValue[]) => {
     if (index === "#") {
       return args.length;
-    } else if (typeof index === "number") {
+    }
+    if (typeof index === "number") {
       if (index >= 0) {
         return new LuaMultiRes(args.slice(index - 1));
-      } else {
-        return new LuaMultiRes(args.slice(args.length + index));
       }
+      return new LuaMultiRes(args.slice(args.length + index));
     }
   },
 );
@@ -324,19 +431,18 @@ const nextFunction = new LuaBuiltinFunction(
       // Return the first key, value
       const key = keys[0];
       return new LuaMultiRes([key, luaGet(table, key, sf.astCtx ?? null, sf)]);
-    } else {
-      // Find index in the key list
-      const idx = keys.indexOf(index);
-      if (idx === -1) { // Not found
-        throw new LuaRuntimeError("invalid key to 'next': key not found", sf);
-      }
-      const key = keys[idx + 1];
-      if (key === undefined) {
-        // When called with the last key, should return nil
-        return null;
-      }
-      return new LuaMultiRes([key, luaGet(table, key, sf.astCtx ?? null, sf)]);
     }
+    // Find index in the key list
+    const idx = keys.indexOf(index);
+    if (idx === -1) { // Not found
+      throw new LuaRuntimeError("invalid key to 'next': key not found", sf);
+    }
+    const key = keys[idx + 1];
+    if (key === undefined) {
+      // When called with the last key, should return nil
+      return null;
+    }
+    return new LuaMultiRes([key, luaGet(table, key, sf.astCtx ?? null, sf)]);
   },
 );
 
@@ -359,13 +465,18 @@ const loadFunction = new LuaBuiltinFunction((sf, s) => luaLoad(s, sf));
 
 export function luaBuildStandardEnv() {
   const env = new LuaEnv();
+  // _G global
+  env.set("_G", env);
+  // Lua version string - for now it signals Lua 5.4 compatibility with
+  // selective 5.5 features; kept non-standard so callers can distinguish
+  // Space Lua from a plain Lua runtime.
+  env.set("_VERSION", "Lua 5.4+");
   // Top-level builtins
   env.set("print", printFunction);
   env.set("assert", assertFunction);
   env.set("type", typeFunction);
   env.set("tostring", tostringFunction);
   env.set("tonumber", tonumberFunction);
-  env.set("unpack", unpackFunction);
   env.set("select", selectFunction);
   env.set("next", nextFunction);
   // Iterators

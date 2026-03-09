@@ -35,8 +35,8 @@ export async function copyAssets(dist: string) {
 
   let katexCss = "";
   try {
-    const require = createRequire(import.meta.url);
-    const katexCssPath = require.resolve("katex/dist/katex.min.css");
+    const katexCssUrl = import.meta.resolve("katex/dist/katex.min.css");
+    const katexCssPath = fileURLToPath(katexCssUrl);
     const katexPath = dirname(katexCssPath);
 
     // Copy Katex fonts
@@ -55,7 +55,7 @@ export async function copyAssets(dist: string) {
     katexCss = Deno.readTextFileSync(katexCssPath);
   } catch (e: any) {
     console.warn(
-      `Could not find KaTeX in node_modules, skipping copy: ${e.message}`,
+      `Could not find KaTeX in Deno cache, skipping copy: ${e.message}`,
     );
   }
 

@@ -20,10 +20,10 @@
     "jsr:@std/testing@^1.0.14": "1.0.17",
     "jsr:@std/text@~1.0.7": "1.0.17",
     "jsr:@std/yaml@^1.0.8": "1.0.11",
-    "npm:@codemirror/autocomplete@6.20.0": "6.20.0",
-    "npm:@codemirror/commands@6.10.1": "6.10.1",
+    "npm:@codemirror/autocomplete@6.18.6": "6.18.6",
+    "npm:@codemirror/commands@6.8.1": "6.8.1",
     "npm:@codemirror/lang-css@6.3.1": "6.3.1",
-    "npm:@codemirror/lang-html@6.4.11": "6.4.11",
+    "npm:@codemirror/lang-html@6.4.9": "6.4.9",
     "npm:@codemirror/lang-javascript@6.2.4": "6.2.4",
     "npm:@codemirror/lang-markdown@6.5.0": "6.5.0",
     "npm:@codemirror/language@6.12.1": "6.12.1",
@@ -41,8 +41,8 @@
     "npm:@lezer/lr@1.4.7": "1.4.7",
     "npm:@lezer/markdown@1.6.3": "1.6.3",
     "npm:@msgpack/msgpack@3.1.3": "3.1.3",
-    "npm:@replit/codemirror-lang-nix@6.0.1": "6.0.1_@codemirror+autocomplete@6.20.0_@codemirror+language@6.12.1_@codemirror+state@6.5.4_@codemirror+view@6.39.11_@lezer+common@1.5.0_@lezer+highlight@1.2.3_@lezer+lr@1.4.7",
-    "npm:@replit/codemirror-vim@6.3.0": "6.3.0_@codemirror+commands@6.10.1_@codemirror+language@6.12.1_@codemirror+search@6.6.0_@codemirror+state@6.5.4_@codemirror+view@6.39.11",
+    "npm:@replit/codemirror-lang-nix@6.0.1": "6.0.1_@codemirror+autocomplete@6.18.6_@codemirror+language@6.12.1_@codemirror+state@6.5.4_@codemirror+view@6.39.11_@lezer+common@1.5.0_@lezer+highlight@1.2.3_@lezer+lr@1.4.7",
+    "npm:@replit/codemirror-vim@6.3.0": "6.3.0_@codemirror+commands@6.8.1_@codemirror+language@6.12.1_@codemirror+search@6.6.0_@codemirror+state@6.5.4_@codemirror+view@6.39.11",
     "npm:ajv@8.17.1": "8.17.1",
     "npm:crelt@1.0.6": "1.0.6",
     "npm:esbuild@~0.25.5": "0.25.12",
@@ -53,10 +53,11 @@
     "npm:gitignore-parser@0.0.2": "0.0.2",
     "npm:idb@8.0.3": "8.0.3",
     "npm:js-yaml@4.1.0": "4.1.0",
+    "npm:katex@0.16.27": "0.16.27",
     "npm:preact-feather@4.2.1": "4.2.1_preact@10.28.2",
     "npm:preact@10.28.2": "10.28.2",
     "npm:style-mod@4.1.2": "4.1.2",
-    "npm:turndown@7.2.2": "7.2.2"
+    "npm:turndown@7.2.0": "7.2.0"
   },
   "jsr": {
     "@cliffy/command@1.0.0-rc.8": {
@@ -144,8 +145,8 @@
     }
   },
   "npm": {
-    "@codemirror/autocomplete@6.20.0": {
-      "integrity": "sha512-bOwvTOIJcG5FVo5gUUupiwYh8MioPLQ4UcqbcRf7UQ98X90tCa9E1kZ3Z7tqwpZxYyOvh1YTYbmZE9RTfTp5hg==",
+    "@codemirror/autocomplete@6.18.6": {
+      "integrity": "sha512-PHHBXFomUs5DF+9tCOM/UoW6XQ4R44lLNNhRaW9PKPTU0D7lIjRg3ElxaJnTwsl/oHiR93WSXDBrekhoUGCPtg==",
       "dependencies": [
         "@codemirror/language",
         "@codemirror/state",
@@ -153,8 +154,8 @@
         "@lezer/common"
       ]
     },
-    "@codemirror/commands@6.10.1": {
-      "integrity": "sha512-uWDWFypNdQmz2y1LaNJzK7fL7TYKLeUAU0npEC685OKTF3KcQ2Vu3klIM78D7I6wGhktme0lh3CuQLv0ZCrD9Q==",
+    "@codemirror/commands@6.8.1": {
+      "integrity": "sha512-KlGVYufHMQzxbdQONiLyGQDUW0itrLZwq3CcY7xpv9ZLRHqzkBSoteocBHtMCoY7/Ci4xhzSrToIeLg7FxHuaw==",
       "dependencies": [
         "@codemirror/language",
         "@codemirror/state",
@@ -172,8 +173,8 @@
         "@lezer/css"
       ]
     },
-    "@codemirror/lang-html@6.4.11": {
-      "integrity": "sha512-9NsXp7Nwp891pQchI7gPdTwBuSuT3K65NGTHWHNJ55HjYcHLllr0rbIZNdOzas9ztc1EUVBlHou85FFZS4BNnw==",
+    "@codemirror/lang-html@6.4.9": {
+      "integrity": "sha512-aQv37pIMSlueybId/2PVSP6NPnmurFDVmZwzc7jszd2KAF8qd4VBbvNYPXWQq90WIARjsdVkPbw29pszmHws3Q==",
       "dependencies": [
         "@codemirror/autocomplete",
         "@codemirror/lang-css",
@@ -576,7 +577,7 @@
     "@msgpack/msgpack@3.1.3": {
       "integrity": "sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA=="
     },
-    "@replit/codemirror-lang-nix@6.0.1_@codemirror+autocomplete@6.20.0_@codemirror+language@6.12.1_@codemirror+state@6.5.4_@codemirror+view@6.39.11_@lezer+common@1.5.0_@lezer+highlight@1.2.3_@lezer+lr@1.4.7": {
+    "@replit/codemirror-lang-nix@6.0.1_@codemirror+autocomplete@6.18.6_@codemirror+language@6.12.1_@codemirror+state@6.5.4_@codemirror+view@6.39.11_@lezer+common@1.5.0_@lezer+highlight@1.2.3_@lezer+lr@1.4.7": {
       "integrity": "sha512-lvzjoYn9nfJzBD5qdm3Ut6G3+Or2wEacYIDJ49h9+19WSChVnxv4ojf+rNmQ78ncuxIt/bfbMvDLMeMP0xze6g==",
       "dependencies": [
         "@codemirror/autocomplete",
@@ -588,7 +589,7 @@
         "@lezer/lr"
       ]
     },
-    "@replit/codemirror-vim@6.3.0_@codemirror+commands@6.10.1_@codemirror+language@6.12.1_@codemirror+search@6.6.0_@codemirror+state@6.5.4_@codemirror+view@6.39.11": {
+    "@replit/codemirror-vim@6.3.0_@codemirror+commands@6.8.1_@codemirror+language@6.12.1_@codemirror+search@6.6.0_@codemirror+state@6.5.4_@codemirror+view@6.39.11": {
       "integrity": "sha512-aTx931ULAMuJx6xLf7KQDOL7CxD+Sa05FktTDrtLaSy53uj01ll3Zf17JdKsriER248oS55GBzg0CfCTjEneAQ==",
       "dependencies": [
         "@codemirror/commands",
@@ -609,6 +610,9 @@
     },
     "argparse@2.0.1": {
       "integrity": "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="
+    },
+    "commander@8.3.0": {
+      "integrity": "sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww=="
     },
     "crelt@1.0.6": {
       "integrity": "sha512-VQ2MBenTq1fWZUH9DJNGti7kKv6EeAuYr3cLwxUWhIu1baTaXh4Ib5W2CqHVqib4/MqbYGJqiL3Zb8GJZr3l4g=="
@@ -710,6 +714,13 @@
     "json-schema-traverse@1.0.0": {
       "integrity": "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug=="
     },
+    "katex@0.16.27": {
+      "integrity": "sha512-aeQoDkuRWSqQN6nSvVCEFvfXdqo1OQiCmmW1kc9xSdjutPv7BGO7pqY9sQRJpMOGrEdfDgF2TfRXe5eUAD2Waw==",
+      "dependencies": [
+        "commander"
+      ],
+      "bin": true
+    },
     "preact-feather@4.2.1_preact@10.28.2": {
       "integrity": "sha512-yK5kYW64AoOkm+xTtUjwcFx0zNrqVTbwmtww8G2AmAB6f8wyQgwZgc6oRXllSYeg7q1I8VbkUpErJuKJ6Vq2eA==",
       "dependencies": [
@@ -725,8 +736,8 @@
     "style-mod@4.1.2": {
       "integrity": "sha512-wnD1HyVqpJUI2+eKZ+eo1UwghftP6yuFheBqqe+bWCotBjC2K1YnteJILRMs3SM4V/0dLEW1SC27MWP5y+mwmw=="
     },
-    "turndown@7.2.2": {
-      "integrity": "sha512-1F7db8BiExOKxjSMU2b7if62D/XOyQyZbPKq/nUwopfgnHlqXHqQ0lvfUTeUIr1lZJzOPFn43dODyMSIfvWRKQ==",
+    "turndown@7.2.0": {
+      "integrity": "sha512-eCZGBN4nNNqM9Owkv9HAtWRYfLA4h909E/WGAWWBpmB275ehNhZyk87/Tpvjbp0jjNl9XwCsbe6bm6CqFsgD+A==",
       "dependencies": [
         "@mixmark-io/domino"
       ]
@@ -798,10 +809,10 @@
       "jsr:@std/path@^1.0.8",
       "jsr:@std/testing@^1.0.14",
       "jsr:@std/yaml@^1.0.8",
-      "npm:@codemirror/autocomplete@6.20.0",
-      "npm:@codemirror/commands@6.10.1",
+      "npm:@codemirror/autocomplete@6.18.6",
+      "npm:@codemirror/commands@6.8.1",
       "npm:@codemirror/lang-css@6.3.1",
-      "npm:@codemirror/lang-html@6.4.11",
+      "npm:@codemirror/lang-html@6.4.9",
       "npm:@codemirror/lang-javascript@6.2.4",
       "npm:@codemirror/lang-markdown@6.5.0",
       "npm:@codemirror/language@6.12.1",
@@ -829,10 +840,11 @@
       "npm:gitignore-parser@0.0.2",
       "npm:idb@8.0.3",
       "npm:js-yaml@4.1.0",
+      "npm:katex@0.16.27",
       "npm:preact-feather@4.2.1",
       "npm:preact@10.28.2",
       "npm:style-mod@4.1.2",
-      "npm:turndown@7.2.2"
+      "npm:turndown@7.2.0"
     ]
   }
 }
